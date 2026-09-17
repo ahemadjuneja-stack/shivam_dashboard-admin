@@ -22,6 +22,11 @@ interface AppState {
   currentCustomer: Customer | null;
   isCartOpen: boolean;
 
+  // Chat State
+  chatMessages: import('../types').ChatMessage[];
+  sendMessage: (msg: import('../types').ChatMessage) => void;
+  markMessagesAsRead: (customerCode: string) => void;
+
   // Actions
   setShowroomScreenMode: (mode: 'home' | 'subcategories' | 'gallery' | 'fullimage') => void;
   setActiveCategory: (categoryId: string) => void;
@@ -52,6 +57,11 @@ interface AppState {
   addMultiplePhotos: (photos: CatalogPhoto[]) => void;
   reorderPhotos: (orderedPhotos: CatalogPhoto[]) => void;
   addSubCategory: (subCat: SubCategory) => void;
+  addCategory: (category: CategoryItem) => void;
+  updateCategory: (categoryId: string, data: Partial<CategoryItem>) => void;
+  deleteCategory: (categoryId: string) => void;
+  updateSubCategory: (subCategoryId: string, data: Partial<SubCategory>) => void;
+  deleteSubCategory: (subCategoryId: string) => void;
   updatePhoto: (photoId: string, data: Partial<CatalogPhoto>) => void;
   deletePhoto: (photoId: string) => void;
   batchSetStock: (photoId: string, available: boolean) => void;
@@ -786,6 +796,29 @@ export const useAppStore = create<AppState>()(
       currentCustomer: { customerCode: 'CUST-101', shopName: 'Pooja Novelty Store', cityName: 'Mumbai', mobileNumber: '9876543210', contactPerson: 'Rajesh Bhai', address: 'Shop 14, Dadar Market' },
       isCartOpen: false,
 
+      // Initial Chat State
+      chatMessages: [
+        {
+          id: 'msg-1',
+          customerCode: 'CUST-001',
+          sender: 'CUSTOMER',
+          type: 'TEXT',
+          content: 'Hello, please process my order quickly.',
+          timestamp: Date.now() - 3600000,
+          isRead: false
+        }
+      ],
+
+      sendMessage: (msg) => set((state) => ({
+        chatMessages: [...state.chatMessages, msg]
+      })),
+
+      markMessagesAsRead: (customerCode) => set((state) => ({
+        chatMessages: state.chatMessages.map(m => 
+          m.customerCode === customerCode && m.sender === 'CUSTOMER' ? { ...m, isRead: true } : m
+        )
+      })),
+
       setShowroomScreenMode: (mode) => set({ showroomScreenMode: mode }),
 
       setActiveCategory: (categoryId) => set((state) => {
@@ -989,6 +1022,21 @@ export const useAppStore = create<AppState>()(
         if (state.subCategories.some(s => s.id === subCat.id)) return state;
         return { subCategories: [...state.subCategories, subCat] };
       }),
+      addCategory: (category) => set((state) => ({
+        categories: [...state.categories, category]
+      })),
+      updateCategory: (categoryId, data) => set((state) => ({
+        categories: state.categories.map(c => c.id === categoryId ? { ...c, ...data } : c)
+      })),
+      deleteCategory: (categoryId) => set((state) => ({
+        categories: state.categories.filter(c => c.id !== categoryId)
+      })),
+      updateSubCategory: (subCategoryId, data) => set((state) => ({
+        subCategories: state.subCategories.map(s => s.id === subCategoryId ? { ...s, ...data } : s)
+      })),
+      deleteSubCategory: (subCategoryId) => set((state) => ({
+        subCategories: state.subCategories.filter(s => s.id !== subCategoryId)
+      })),
 
       updatePhoto: (photoId, data) => set((state) => ({
         photos: state.photos.map(p => p.id === photoId ? { ...p, ...data } : p)

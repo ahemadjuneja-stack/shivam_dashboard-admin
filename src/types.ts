@@ -75,6 +75,7 @@ export interface WholesaleOrder {
   hairStatus: string;
   overallStatus: string; // PENDING, DONE, RECEIVED, PARTIALLY_PACKED, READY_TO_SHIP, DISPATCHED
   notes: string;
+  voiceNoteUrl?: string; // Voice recording URL from mobile application
   createdAt: number;
   source?: 'SALESMAN' | 'CUSTOMER';
   salesmanName?: string; // e.g. 'RAMIZ', 'RIYAZ', 'ZARIF'
@@ -91,4 +92,14 @@ export interface ShowroomVideo {
   categoryName?: string;
   fileSizeMb?: number;
   uploadedAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  customerCode: string;
+  sender: 'CUSTOMER' | 'ADMIN';
+  type: 'TEXT' | 'IMAGE' | 'VOICE';
+  content: string; // text content, or URL for image/voice
+  timestamp: number;
+  isRead: boolean;
 }

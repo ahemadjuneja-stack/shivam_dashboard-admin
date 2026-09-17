@@ -1,7 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useAppStore } from '../store';
-import { WholesaleOrder, MainCategory, OrderCartItem, CatalogPhoto, CategoryItem, Customer } from '../types';
+import { WholesaleOrder, MainCategory, OrderCartItem, CatalogPhoto, Customer } from '../types';
 import { ProductUploadEditor } from '../components/ProductUploadEditor';
+import { ShowroomVideoManager } from '../components/ShowroomVideoManager';
+import { CommunicationPanel } from '../components/CommunicationPanel';
+import { CategoryManager } from '../components/CategoryManager';
+import { getTextColorForBackground } from '../utils';
 import {
   Trash2,
   Plus,
@@ -14,9 +18,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsRight,
-  Printer,
   X,
-  AlertCircle
+  AlertCircle,
+  MessageSquare
 } from 'lucide-react';
 
 // Vintage/muted background palette matching the exact screenshot design
@@ -64,6 +68,8 @@ export const AdminDashboard: React.FC = () => {
   const [showProductUploadScreen, setShowProductUploadScreen] = useState(false);
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [showVideoManager, setShowVideoManager] = useState(false);
+  const [showCommunicationPanel, setShowCommunicationPanel] = useState(false);
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [showCustomersModal, setShowCustomersModal] = useState(false);
   const [orderToDelete, setOrderToDelete] = useState<WholesaleOrder | null>(null);
@@ -413,7 +419,26 @@ export const AdminDashboard: React.FC = () => {
             </div>
           ) : (
             paginatedOrders.map((order: WholesaleOrder, index: number) => {
-              const colorTheme = ROW_COLORS[index % ROW_COLORS.length];
+              const defaultTheme = ROW_COLORS[index % ROW_COLORS.length];
+              let rowStyle: React.CSSProperties = {};
+              let rowClass = `w-full h-11 ${defaultTheme.bg} ${defaultTheme.text} rounded flex items-center justify-between transition-all hover:brightness-105 shadow-sm overflow-hidden group`;
+              let subtextClass = defaultTheme.subtext;
+
+              // Determine dynamic color based on category filter or first item
+              let accentColor: string | undefined;
+              if (categoryFilter !== 'ALL') {
+                accentColor = categories.find(c => c.id === categoryFilter)?.accentColorHex;
+              } else if (order.items && order.items.length > 0) {
+                accentColor = categories.find(c => c.id === order.items[0].categoryId)?.accentColorHex;
+              }
+
+              if (accentColor) {
+                const dynamicTextColor = getTextColorForBackground(accentColor);
+                rowStyle = { backgroundColor: accentColor, color: dynamicTextColor };
+                rowClass = `w-full h-11 rounded flex items-center justify-between transition-all hover:brightness-105 shadow-sm overflow-hidden group`;
+                subtextClass = dynamicTextColor === '#000000' ? 'text-black/70' : 'text-white/80';
+              }
+
               const dateStr = getOrderDate(order);
               const titleStr = getOrderDisplayTitle(order);
               const isDone = order.overallStatus === 'DONE' || order.overallStatus === 'READY_TO_SHIP';
@@ -421,7 +446,8 @@ export const AdminDashboard: React.FC = () => {
               return (
                 <div
                   key={order.id}
-                  className={`w-full h-11 ${colorTheme.bg} ${colorTheme.text} rounded flex items-center justify-between transition-all hover:brightness-105 shadow-sm overflow-hidden group`}
+                  className={rowClass}
+                  style={rowStyle}
                 >
                   {/* Clickable Row Area to Open Breakdown */}
                   <div
@@ -441,7 +467,7 @@ export const AdminDashboard: React.FC = () => {
                     {/* 3. Note / Remarks Column */}
                     <div className="flex-1 min-w-[120px] px-3 flex items-center justify-center text-xs font-medium truncate text-center select-none">
                       {order.notes && order.notes.trim() ? (
-                        <span className={`${colorTheme.subtext} truncate`}>
+                        <span className={`${subtextClass} truncate`}>
                           {order.notes}
                         </span>
                       ) : (
@@ -565,10 +591,10 @@ export const AdminDashboard: React.FC = () => {
             <Plus size={22} className="stroke-[2.5]" />
           </button>
 
-          {/* 2. IMAGE ICON: Photos & Media */}
+          {/* 2. IMAGE ICON: Photos & Media (Changed to Showroom Videos) */}
           <button
-            onClick={() => setShowCatalogModal(true)}
-            title="Product Photos & Media"
+            onClick={() => setShowVideoManager(true)}
+            title="Showroom Video Management"
             className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-800/80 active:scale-95 transition"
           >
             <ImageIcon size={20} />
@@ -590,6 +616,15 @@ export const AdminDashboard: React.FC = () => {
             className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-800/80 active:scale-95 transition"
           >
             <Users size={20} />
+          </button>
+          
+          {/* 5. MESSAGE/COMMUNICATION ICON: Chat & Voice Notes */}
+          <button
+            onClick={() => setShowCommunicationPanel(true)}
+            title="Customer Communication"
+            className="w-10 h-10 rounded-lg flex items-center justify-center text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 active:scale-95 transition relative"
+          >
+            <MessageSquare size={20} />
           </button>
         </div>
 
@@ -634,14 +669,6 @@ export const AdminDashboard: React.FC = () => {
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.print()}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition"
-                  title="Print Delivery Slip"
-                >
-                  <Printer size={14} />
-                  <span>Print Slip</span>
-                </button>
-                <button
                   onClick={() => setSelectedOrder(null)}
                   className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
                 >
@@ -669,94 +696,83 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[11px] text-slate-400 font-semibold block">Overall Status</span>
-                  <button
-                    onClick={() => {
-                      toggleOrderStatus(selectedOrder.id);
-                      setSelectedOrder(prev => prev ? {
-                        ...prev,
-                        overallStatus: (prev.overallStatus === 'DONE' || prev.overallStatus === 'READY_TO_SHIP') ? 'PENDING' : 'DONE'
-                      } : null);
-                    }}
-                    className={`mt-0.5 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                      (selectedOrder.overallStatus === 'DONE' || selectedOrder.overallStatus === 'READY_TO_SHIP')
-                        ? 'bg-emerald-500 text-black'
-                        : 'bg-amber-500 text-black'
-                    }`}
-                  >
-                    {(selectedOrder.overallStatus === 'DONE' || selectedOrder.overallStatus === 'READY_TO_SHIP') ? 'DONE' : 'PENDING'}
-                  </button>
+                  <span className={`mt-0.5 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider inline-block ${
+                    (selectedOrder.overallStatus === 'DONE' || selectedOrder.overallStatus === 'READY_TO_SHIP')
+                      ? 'bg-emerald-500 text-black'
+                      : 'bg-amber-500 text-black'
+                  }`}>
+                    {selectedOrder.overallStatus}
+                  </span>
                 </div>
               </div>
 
-              {/* Remarks / Order Notes with Inline Edit */}
-              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-300">Order Note / Transport Instructions</span>
-                  {editingNoteOrderId !== selectedOrder.id && (
-                    <button
-                      onClick={() => {
-                        setEditingNoteOrderId(selectedOrder.id);
-                        setEditNoteText(selectedOrder.notes || '');
-                      }}
-                      className="text-xs text-amber-400 hover:underline font-semibold"
-                    >
-                      Edit Note
-                    </button>
-                  )}
-                </div>
-                {editingNoteOrderId === selectedOrder.id ? (
-                  <div className="space-y-2">
-                    <textarea
-                      value={editNoteText}
-                      onChange={(e) => setEditNoteText(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
-                      rows={2}
-                      placeholder="e.g. nail and lipstick ma box nakhjo..."
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => setEditingNoteOrderId(null)}
-                        className="px-2.5 py-1 rounded bg-slate-800 text-xs text-slate-300"
-                      >
-                        Cancel
-                      </button>
+              {/* Remarks / Order Notes with Inline Edit & Voice Recording */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl space-y-4">
+                
+                {/* Text Note Section */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-300">Order Note / Transport Instructions</span>
+                    {editingNoteOrderId !== selectedOrder.id && (
                       <button
                         onClick={() => {
-                          handleSaveNote(selectedOrder.id);
-                          setSelectedOrder(prev => prev ? { ...prev, notes: editNoteText } : null);
+                          setEditingNoteOrderId(selectedOrder.id);
+                          setEditNoteText(selectedOrder.notes || '');
                         }}
-                        className="px-3 py-1 rounded bg-amber-500 text-xs font-bold text-black"
+                        className="text-xs text-amber-400 hover:underline font-semibold"
                       >
-                        Save
+                        Edit Note
                       </button>
-                    </div>
+                    )}
                   </div>
-                ) : (
-                  <p className="text-xs text-slate-200 bg-slate-950/50 p-2.5 rounded-lg border border-slate-800/80 italic">
-                    {selectedOrder.notes || 'No Note entered for this order.'}
-                  </p>
-                )}
-              </div>
 
-              {/* Department Station Statuses */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-center">
-                  <span className="text-[10px] text-slate-400 font-bold block uppercase">Imitation</span>
-                  <span className="text-xs font-bold text-white mt-1 inline-block">
-                    {selectedOrder.imitationStatus}
-                  </span>
+                  {editingNoteOrderId === selectedOrder.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editNoteText}
+                        onChange={(e) => setEditNoteText(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                        rows={2}
+                        placeholder="e.g. nail and lipstick ma box nakhjo..."
+                      />
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => setEditingNoteOrderId(null)}
+                          className="px-2.5 py-1 rounded bg-slate-800 text-xs text-slate-300"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleSaveNote(selectedOrder.id);
+                            setSelectedOrder(prev => prev ? { ...prev, notes: editNoteText } : null);
+                          }}
+                          className="px-3 py-1 rounded bg-amber-500 text-xs font-bold text-black"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-200 bg-slate-950/50 p-2.5 rounded-lg border border-slate-800/80 italic min-h-[40px]">
+                      {selectedOrder.notes || 'No Note entered for this order.'}
+                    </p>
+                  )}
                 </div>
-                <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-center">
-                  <span className="text-[10px] text-slate-400 font-bold block uppercase">Cosmetics</span>
-                  <span className="text-xs font-bold text-white mt-1 inline-block">
-                    {selectedOrder.cosmeticsStatus}
-                  </span>
-                </div>
-                <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-center">
-                  <span className="text-[10px] text-slate-400 font-bold block uppercase">Hair Access.</span>
-                  <span className="text-xs font-bold text-white mt-1 inline-block">
-                    {selectedOrder.hairStatus}
-                  </span>
+
+                {/* Voice Note Section */}
+                <div className="pt-3 border-t border-slate-800">
+                  <span className="text-xs font-bold text-slate-300 block mb-2">Voice Recording</span>
+                  {selectedOrder.voiceNoteUrl ? (
+                    <audio controls className="w-full h-8">
+                      <source src={selectedOrder.voiceNoteUrl} type="audio/mpeg" />
+                      Your browser does not support the audio element.
+                    </audio>
+                  ) : (
+                    <div className="w-full bg-slate-950/50 border border-slate-800/80 rounded-lg p-3 flex items-center justify-center">
+                      <span className="text-xs text-slate-500 italic">No voice recording attached by customer.</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -819,12 +835,29 @@ export const AdminDashboard: React.FC = () => {
                 <span>Delete Order</span>
               </button>
 
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition"
-              >
-                Done
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    toggleOrderStatus(selectedOrder.id);
+                    setSelectedOrder(prev => prev ? { ...prev, overallStatus: 'DONE' } : null);
+                  }}
+                  disabled={selectedOrder.overallStatus === 'DONE' || selectedOrder.overallStatus === 'READY_TO_SHIP'}
+                  className={`px-4 py-1.5 rounded-lg font-extrabold text-xs transition ${
+                    selectedOrder.overallStatus === 'DONE' || selectedOrder.overallStatus === 'READY_TO_SHIP'
+                      ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  }`}
+                >
+                  {selectedOrder.overallStatus === 'DONE' || selectedOrder.overallStatus === 'READY_TO_SHIP' ? 'ALREADY DONE' : 'MARK ALL DONE'}
+                </button>
+
+                <button
+                  onClick={() => setSelectedOrder(null)}
+                  className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1046,40 +1079,10 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {/* ----------------------------------------------------------------- */}
-      {/* MODAL 5: CATEGORIES & STOCK DRAWER */}
+      {/* SCREEN: CATEGORY MANAGER (Icon 3) */}
       {/* ----------------------------------------------------------------- */}
       {showInventoryModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0b1329] border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="px-6 py-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Package size={18} className="text-amber-400" />
-                <span>Categories & Department Master</span>
-              </h2>
-              <button onClick={() => setShowInventoryModal(false)} className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
-              {categories.map((cat: CategoryItem) => (
-                <div key={cat.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center font-bold text-sm">
-                      {cat.displayName.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-white text-sm">{cat.displayName}</h4>
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-slate-800 text-amber-300">
-                    Active
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <CategoryManager onClose={() => setShowInventoryModal(false)} />
       )}
 
       {/* ----------------------------------------------------------------- */}
@@ -1121,6 +1124,17 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ----------------------------------------------------------------- */}
+      {/* SCREEN: SHOWROOM VIDEO MANAGER (Icon 2) */}
+      {/* ----------------------------------------------------------------- */}
+      {showVideoManager && (
+        <ShowroomVideoManager onClose={() => setShowVideoManager(false)} />
+      )}
+
+      {showCommunicationPanel && (
+        <CommunicationPanel onClose={() => setShowCommunicationPanel(false)} />
       )}
 
       {/* ----------------------------------------------------------------- */}

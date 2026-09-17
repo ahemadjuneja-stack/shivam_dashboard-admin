@@ -10,7 +10,6 @@ import {
   Upload,
   Check,
   Sparkles,
-  Layers,
   Heart,
   Edit2
 } from 'lucide-react';
@@ -40,7 +39,7 @@ interface ProductUploadEditorProps {
 }
 
 export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClose, onSuccess }) => {
-  const { categories, subCategories, addMultiplePhotos, addSubCategory } = useAppStore();
+  const { subCategories, addMultiplePhotos, addSubCategory } = useAppStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,15 +56,15 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
   const [isChangingPosition, setIsChangingPosition] = useState(false);
   const [targetPositionInput, setTargetPositionInput] = useState('1');
 
-  // Multi-upload configuration modal
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [batchCategory, setBatchCategory] = useState<string>(MainCategory.COSMETICS);
-  const [batchSubCategory, setBatchSubCategory] = useState<string>('H PERFUME');
-  const [batchCodePrefix, setBatchCodePrefix] = useState<string>('CH');
-  const [batchVariantCount, setBatchVariantCount] = useState<number>(2);
-  const [batchVariantStyle, setBatchVariantStyle] = useState<'ALPHA' | 'NUMERIC' | 'CUSTOM'>('ALPHA');
-  const [batchCustomLabelsInput, setBatchCustomLabelsInput] = useState<string>('1KG, 2KG, 5KG');
+  // Multi-upload configuration modal (removed)
+  // const [showUploadModal, setShowUploadModal] = useState(false);
+  // const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  // const [batchCategory, setBatchCategory] = useState<string>(MainCategory.COSMETICS);
+  // const [batchSubCategory, setBatchSubCategory] = useState<string>('H PERFUME');
+  // const [batchCodePrefix, setBatchCodePrefix] = useState<string>('CH');
+  // const [batchVariantCount, setBatchVariantCount] = useState<number>(2);
+  // const [batchVariantStyle, setBatchVariantStyle] = useState<'ALPHA' | 'NUMERIC' | 'CUSTOM'>('ALPHA');
+  // const [batchCustomLabelsInput, setBatchCustomLabelsInput] = useState<string>('1KG, 2KG, 5KG');
   const [editingVariantIndex, setEditingVariantIndex] = useState<number | null>(null);
 
   // Notification toast
@@ -130,7 +129,9 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
   // Delete current photo
   const handleDeleteCurrentPhoto = () => {
     if (stagedPhotos.length <= 1) {
-      showToast('Cannot delete the only photo. Add another photo first.');
+      setStagedPhotos([]);
+      setCurrentIndex(0);
+      showToast('Photo removed. Returned to upload screen.');
       return;
     }
     const updated = stagedPhotos.filter((_, idx) => idx !== currentIndex);
@@ -214,71 +215,33 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
   };
 
   // File selection for multiple photos
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     const fileList = Array.from(files);
-    setPendingFiles(fileList);
-    setShowUploadModal(true);
-    e.target.value = '';
-  };
-
-  // Confirming batch upload from modal
-  const handleConfirmBatchUpload = async () => {
-    if (pendingFiles.length === 0) {
-      setShowUploadModal(false);
-      return;
-    }
-
-    // Determine variant labels based on selected style
-    let customLabelsList: string[] = [];
-    if (batchVariantStyle === 'NUMERIC') {
-      customLabelsList = Array.from({ length: batchVariantCount }, (_, i) => String(i + 1));
-    } else if (batchVariantStyle === 'CUSTOM') {
-      const splitList = batchCustomLabelsInput.split(',').map(s => s.trim()).filter(Boolean);
-      if (splitList.length > 0) {
-        customLabelsList = splitList;
-      } else {
-        customLabelsList = Array.from({ length: batchVariantCount }, (_, i) => String.fromCharCode(65 + i));
-      }
-    } else {
-      // Default ALPHA (A, B, C, D)
-      customLabelsList = Array.from({ length: batchVariantCount }, (_, i) => String.fromCharCode(65 + i));
-    }
-
+    
     const newStagedList: StagedPhoto[] = [];
-
-    for (let i = 0; i < pendingFiles.length; i++) {
-      const file = pendingFiles[i];
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
       const dataUrl = await readFileAsDataUrl(file);
-
-      const variants: VariantItem[] = [];
-      const effectiveCount = batchVariantStyle === 'CUSTOM' ? customLabelsList.length : batchVariantCount;
-      for (let v = 0; v < effectiveCount; v++) {
-        const label = customLabelsList[v] || String.fromCharCode(65 + v);
-        variants.push({
-          letter: label,
-          name: `Variant ${label}`,
-          quantity: 1
-        });
-      }
+      
+      const variants: VariantItem[] = [
+        { letter: 'A', name: 'Variant A', quantity: 1 },
+        { letter: 'B', name: 'Variant B', quantity: 1 }
+      ];
 
       const seqNum = stagedPhotos.length + i + 1;
-      const code = `${batchCodePrefix} ${seqNum}`;
-
-      // Category display name
-      const matchedCat = categories.find(c => c.id === batchCategory);
-      const catDisplayName = matchedCat ? matchedCat.displayName.toUpperCase() : 'COSMETIC';
+      const code = `CH ${seqNum}`;
 
       newStagedList.push({
         id: `staged-${Date.now()}-${i}`,
         imageUri: dataUrl,
         photoCode: code,
-        categoryId: batchCategory,
-        categoryName: catDisplayName,
-        subCategoryId: `sub-${batchSubCategory.toLowerCase().replace(/\s+/g, '-')}`,
-        subCategoryName: batchSubCategory,
+        categoryId: MainCategory.COSMETICS,
+        categoryName: 'COSMETIC',
+        subCategoryId: 'sub-h-perfume',
+        subCategoryName: 'H PERFUME',
         isWishlist: false,
         variants,
         mrpText: 'MRP : 999/- (100ml)'
@@ -287,9 +250,9 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
 
     setStagedPhotos(prev => [...prev, ...newStagedList]);
     setCurrentIndex(stagedPhotos.length); // Jump to the newly added first photo
-    setShowUploadModal(false);
-    setPendingFiles([]);
     showToast(`Added ${newStagedList.length} photos! Adjust position and details as needed.`);
+    
+    e.target.value = '';
   };
 
   const readFileAsDataUrl = (file: File): Promise<string> => {
@@ -811,153 +774,6 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
           </div>
         </div>
       </div>
-
-      {/* ================================================================= */}
-      {/* MULTI-PHOTO UPLOAD DIALOG: ASK CATEGORY & SUBCATEGORY UPFRONT     */}
-      {/* ================================================================= */}
-      {showUploadModal && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0b1429] border border-slate-700 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
-            
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Layers className="text-amber-400" size={20} />
-                <h3 className="font-bold text-white text-sm">
-                  Upload {pendingFiles.length} Selected Photos
-                </h3>
-              </div>
-              <button
-                onClick={() => {
-                  setShowUploadModal(false);
-                  setPendingFiles([]);
-                }}
-                className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              {/* Category */}
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">
-                  1. Choose Category for these photos:
-                </label>
-                <select
-                  value={batchCategory}
-                  onChange={(e) => setBatchCategory(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-semibold focus:outline-none focus:border-amber-400"
-                >
-                  <option value={MainCategory.COSMETICS}>Cosmetics</option>
-                  <option value={MainCategory.IMITATION}>Imitation Jewelry</option>
-                  <option value={MainCategory.HAIR_ACCESSORIES}>Hair Accessories</option>
-                </select>
-              </div>
-
-              {/* Subcategory */}
-              <div>
-                <label className="block text-slate-300 font-bold mb-1">
-                  2. Choose or Type Subcategory:
-                </label>
-                <input
-                  type="text"
-                  value={batchSubCategory}
-                  onChange={(e) => setBatchSubCategory(e.target.value.toUpperCase())}
-                  placeholder="e.g. H PERFUME, EARRINGS, LIPSTICK..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-semibold focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              {/* Item Code Prefix & Variant Style */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">
-                    3. Code Prefix:
-                  </label>
-                  <input
-                    type="text"
-                    value={batchCodePrefix}
-                    onChange={(e) => setBatchCodePrefix(e.target.value.toUpperCase())}
-                    placeholder="e.g. CH, POSH"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">
-                    4. Naming Style:
-                  </label>
-                  <select
-                    value={batchVariantStyle}
-                    onChange={(e) => setBatchVariantStyle(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-white font-bold"
-                  >
-                    <option value="ALPHA">Letters (A, B, C...)</option>
-                    <option value="NUMERIC">Numbers (1, 2, 3...)</option>
-                    <option value="CUSTOM">Custom (1KG, 2KG...)</option>
-                  </select>
-                </div>
-              </div>
-
-              {batchVariantStyle === 'CUSTOM' ? (
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">
-                    Custom Variant Names (comma-separated):
-                  </label>
-                  <input
-                    type="text"
-                    value={batchCustomLabelsInput}
-                    onChange={(e) => setBatchCustomLabelsInput(e.target.value.toUpperCase())}
-                    placeholder="e.g. 1KG, 2KG, 5KG or 100ML, 200ML"
-                    className="w-full bg-slate-950 border border-amber-400/70 rounded-lg px-3 py-2 text-amber-300 font-bold"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    Har photo ke liye yeh variants banenge (jaise 1KG, 2KG).
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-slate-300 font-bold mb-1">
-                    Variants count per photo:
-                  </label>
-                  <select
-                    value={batchVariantCount}
-                    onChange={(e) => setBatchVariantCount(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-bold"
-                  >
-                    <option value={1}>1 Variant ({batchVariantStyle === 'NUMERIC' ? '1' : 'A'})</option>
-                    <option value={2}>2 Variants ({batchVariantStyle === 'NUMERIC' ? '1, 2' : 'A, B'})</option>
-                    <option value={3}>3 Variants ({batchVariantStyle === 'NUMERIC' ? '1, 2, 3' : 'A, B, C'})</option>
-                    <option value={4}>4 Variants ({batchVariantStyle === 'NUMERIC' ? '1, 2, 3, 4' : 'A, B, C, D'})</option>
-                  </select>
-                </div>
-              )}
-
-              <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300 space-y-1">
-                <p>• Photos will be ordered sequentially.</p>
-                <p>• You can adjust position/number (1/N), variants, and code for each photo individually on the staging screen.</p>
-              </div>
-            </div>
-
-            <div className="pt-2 flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setShowUploadModal(false);
-                  setPendingFiles([]);
-                }}
-                className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 font-bold text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmBatchUpload}
-                className="px-5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs transition"
-              >
-                Import & Stage Photos
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

@@ -39,7 +39,7 @@ export function Home() {
   const totalCartPieces = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   // Video slide reel (all photos with videos in 16:9 HDTV)
-  const videoList = photos.filter(p => !!p.videoUri);
+  const videoList = useAppStore(state => state.showroomVideos);
   const [videoSlideIdx, setVideoSlideIdx] = useState(0);
   const [isVideoMuted, setIsVideoMuted] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -205,12 +205,16 @@ export function Home() {
                 <video
                   ref={videoRef}
                   key={activeVideoPhoto.videoUri}
-                  src={activeVideoPhoto.videoUri}
+                  src={activeVideoPhoto.videoUri || undefined}
                   autoPlay
                   loop
                   muted={isVideoMuted}
                   playsInline
                   className="w-full h-full object-cover"
+                  onError={(e) => {
+                    // Ignore or handle video load errors quietly
+                    e.currentTarget.style.display = 'none';
+                  }}
                 />
 
                 {/* Video Slide Chevrons */}
