@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Outer squircle background: Vibrant Rich Red -->
+  <rect x="24" y="24" width="464" height="464" rx="100" ry="100" fill="#EE0000" />
+  
+  <!-- Complete, uninterrupted cursive signature 'S' -->
+  <path
+    d="M 165 330
+       C 200 240, 260 150, 330 110
+       C 365 125, 362 165, 330 195
+       C 265 260, 200 315, 170 355
+       C 145 405, 210 435, 280 415
+       C 330 385, 350 350, 360 310"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="33"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

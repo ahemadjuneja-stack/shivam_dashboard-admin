@@ -1,0 +1,578 @@
+import { useState, useEffect, useRef } from 'react';
+import { useAppStore } from '../store';
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  Plus, 
+  Minus, 
+  Volume2, 
+  VolumeX, 
+  ArrowLeft, 
+  Check,
+  ShoppingBag
+} from 'lucide-react';
+import { CatalogPhoto } from '../types';
+
+export function Home() {
+  const categories = useAppStore(state => state.categories);
+  const subCategories = useAppStore(state => state.subCategories);
+  const photos = useAppStore(state => state.photos);
+  const cart = useAppStore(state => state.cart);
+  const setItemQuantity = useAppStore(state => state.setItemQuantity);
+  const setIsCartOpen = useAppStore(state => state.setIsCartOpen);
+
+  const activeCategoryId = useAppStore(state => state.activeCategoryId);
+  const activeSubCategoryId = useAppStore(state => state.activeSubCategoryId);
+  const setActiveCategory = useAppStore(state => state.setActiveCategory);
+  const setActiveSubCategory = useAppStore(state => state.setActiveSubCategory);
+  const setShowroomScreenMode = useAppStore(state => state.setShowroomScreenMode);
+
+  // Screen modes: 'home' | 'subcategories' | 'gallery' | 'fullimage'
+  const [screenMode, setScreenMode] = useState<'home' | 'subcategories' | 'gallery' | 'fullimage'>('home');
+  const [selectedPhoto, setSelectedPhoto] = useState<CatalogPhoto | null>(null);
+
+  // Filtered lists
+  const currentCategory = categories.find(c => c.id === activeCategoryId) || categories[0];
+  const categorySubList = subCategories.filter(s => s.categoryId === activeCategoryId);
+  const galleryPhotos = photos.filter(p => p.subCategoryId === activeSubCategoryId);
+  const activePhotoIndex = selectedPhoto ? galleryPhotos.findIndex(p => p.id === selectedPhoto.id) : 0;
+  const totalCartPieces = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  // Video slide reel (all photos with videos in 16:9 HDTV)
+  const videoList = photos.filter(p => !!p.videoUri);
+  const [videoSlideIdx, setVideoSlideIdx] = useState(0);
+  const [isVideoMuted, setIsVideoMuted] = useState(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Touch & Swipe gesture handling for full image
+  const touchStartX = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+  const isMouseDown = useRef(false);
+  const mouseStartX = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchEndX.current = null;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchEndX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX.current !== null && touchEndX.current !== null) {
+      const diffX = touchStartX.current - touchEndX.current;
+      if (diffX > 35) {
+        handleNextPhoto(); // swiped left -> next photo
+      } else if (diffX < -35) {
+        handlePrevPhoto(); // swiped right -> prev photo
+      }
+    }
+    touchStartX.current = null;
+    touchEndX.current = null;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isMouseDown.current = true;
+    mouseStartX.current = e.clientX;
+  };
+
+  const handleMouseMove = () => {
+    // keeping drag state active
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (isMouseDown.current && mouseStartX.current !== null) {
+      const diffX = mouseStartX.current - e.clientX;
+      if (diffX > 40) {
+        handleNextPhoto();
+      } else if (diffX < -40) {
+        handlePrevPhoto();
+      }
+    }
+    isMouseDown.current = false;
+    mouseStartX.current = null;
+  };
+
+  // Feedback notification
+  const [qtyFeedback, setQtyFeedback] = useState<string | null>(null);
+
+  // Auto-slide video on the left side every 6.5s
+  useEffect(() => {
+    if (videoList.length <= 1) return;
+    const interval = setInterval(() => {
+      setVideoSlideIdx(prev => (prev + 1) % videoList.length);
+    }, 6500);
+    return () => clearInterval(interval);
+  }, [videoList.length]);
+
+  const activeVideoPhoto = videoList[videoSlideIdx] || videoList[0];
+
+  // 1. Select category from Home -> opens subcategory view
+  const handleSelectCategory = (catId: string) => {
+    setActiveCategory(catId);
+    setScreenMode('subcategories');
+    setShowroomScreenMode('subcategories');
+  };
+
+  // 2. Select subcategory -> opens gallery view
+  const handleSelectSubCategory = (subId: string) => {
+    setActiveSubCategory(subId);
+    setScreenMode('gallery');
+    setShowroomScreenMode('gallery');
+  };
+
+  // 3. Select product photo -> opens full image view
+  const handleOpenFullImage = (photo: CatalogPhoto) => {
+    setSelectedPhoto(photo);
+    setScreenMode('fullimage');
+    setShowroomScreenMode('fullimage');
+  };
+
+  // Next & Prev slide in Full Image mode
+  const handleNextPhoto = () => {
+    if (galleryPhotos.length === 0) return;
+    const nextIdx = (activePhotoIndex + 1) % galleryPhotos.length;
+    setSelectedPhoto(galleryPhotos[nextIdx]);
+  };
+
+  const handlePrevPhoto = () => {
+    if (galleryPhotos.length === 0) return;
+    const prevIdx = (activePhotoIndex - 1 + galleryPhotos.length) % galleryPhotos.length;
+    setSelectedPhoto(galleryPhotos[prevIdx]);
+  };
+
+  // Keyboard navigation for full image
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (screenMode === 'fullimage') {
+        if (e.key === 'ArrowRight') handleNextPhoto();
+        if (e.key === 'ArrowLeft') handlePrevPhoto();
+        if (e.key === 'Escape') {
+          setScreenMode('gallery');
+          setShowroomScreenMode('gallery');
+        }
+      } else if (screenMode === 'gallery') {
+        if (e.key === 'Escape') {
+          setScreenMode('subcategories');
+          setShowroomScreenMode('subcategories');
+        }
+      } else if (screenMode === 'subcategories') {
+        if (e.key === 'Escape') {
+          setScreenMode('home');
+          setShowroomScreenMode('home');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // Get current quantity for a photo's option letter from cart
+  const getOptionQty = (photoId: string, optionLetter: string, defaultQty: number) => {
+    const item = cart.find(c => c.photoId === photoId && c.optionLetter === optionLetter);
+    return item ? item.quantity : defaultQty;
+  };
+
+  // Update quantity directly (No cart button required!)
+  const handleUpdateQty = (photo: CatalogPhoto, option: string, newQty: number) => {
+    const finalQty = Math.max(0, newQty);
+    setItemQuantity(photo, option, finalQty);
+    setQtyFeedback(`${option}: ${finalQty}`);
+    setTimeout(() => setQtyFeedback(null), 1200);
+  };
+
+  const letterBadgeColors: Record<string, { bg: string; text: string }> = {
+    A: { bg: 'bg-amber-400', text: 'text-black' },
+    B: { bg: 'bg-sky-400', text: 'text-black' },
+    C: { bg: 'bg-emerald-400', text: 'text-black' },
+    D: { bg: 'bg-fuchsia-400', text: 'text-white' }
+  };
+
+  /* -----------------------------------------------------------------------------------
+     VIEW 1: HOME PAGE (LEFT HDTV 16:9 VIDEO SLIDE, RIGHT ONLY CATEGORY THUMBNAILS!)
+     * Category me sirf thumbnail ki image aayegi! No subcategories on Home!
+     ----------------------------------------------------------------------------------- */
+  if (screenMode === 'home') {
+    return (
+      <div className="w-full h-full flex flex-row gap-3 overflow-hidden select-none items-center">
+        
+        {/* LEFT: HDTV 16:9 VIDEO SLIDE (EXPANDED TO ~64% WIDTH) */}
+        <div className="w-[64%] h-full flex items-center justify-center bg-black/40 rounded-2xl border border-slate-800/80 p-2 overflow-hidden shadow-2xl">
+          <div className="w-full aspect-video max-h-full rounded-xl overflow-hidden bg-black relative border border-slate-800 shadow-xl flex items-center justify-center group">
+            {activeVideoPhoto?.videoUri ? (
+              <>
+                <video
+                  ref={videoRef}
+                  key={activeVideoPhoto.videoUri}
+                  src={activeVideoPhoto.videoUri}
+                  autoPlay
+                  loop
+                  muted={isVideoMuted}
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+
+                {/* Video Slide Chevrons */}
+                {videoList.length > 1 && (
+                  <>
+                    <button
+                      onClick={() => setVideoSlideIdx(prev => (prev - 1 + videoList.length) % videoList.length)}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black text-white flex items-center justify-center backdrop-blur-md border border-white/20 transition hover:scale-105 active:scale-95 z-10"
+                      title="Previous"
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <button
+                      onClick={() => setVideoSlideIdx(prev => (prev + 1) % videoList.length)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black text-white flex items-center justify-center backdrop-blur-md border border-white/20 transition hover:scale-105 active:scale-95 z-10"
+                      title="Next"
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                  </>
+                )}
+
+                {/* Mute/Unmute */}
+                <button
+                  onClick={() => setIsVideoMuted(!isVideoMuted)}
+                  className="absolute bottom-2.5 right-2.5 p-1.5 rounded-lg bg-black/70 hover:bg-black text-white backdrop-blur-md border border-white/20 transition z-10"
+                >
+                  {isVideoMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                </button>
+
+                {/* Slide Dots */}
+                {videoList.length > 1 && (
+                  <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/15 flex items-center gap-1.5 z-10">
+                    {videoList.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setVideoSlideIdx(i)}
+                        className={`h-1.5 rounded-full transition-all ${
+                          i === videoSlideIdx ? 'w-4 bg-brand-gold' : 'w-1.5 bg-white/40'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        {/* RIGHT: CATEGORY THUMBNAILS SIDEBAR (BALANCED SIZE, SMOOTH SCROLL) */}
+        <div className="w-[35%] h-full rounded-2xl bg-slate-900/90 border border-slate-800 p-2.5 shadow-2xl flex flex-col gap-2.5 overflow-y-auto scroll-smooth select-none">
+          {categories.map(cat => {
+            return (
+              <button
+                key={cat.id}
+                onClick={() => handleSelectCategory(cat.id)}
+                className="group w-full flex-shrink-0 flex flex-col gap-1.5 p-1.5 rounded-xl bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 hover:border-brand-gold/80 transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] text-center focus:outline-none shadow-md"
+              >
+                {/* 1. Strict 16:9 Category Thumbnail Image (Natural balanced ratio, neither too small nor oversized) */}
+                <div className="w-full aspect-video rounded-lg overflow-hidden bg-black border border-slate-700/60 group-hover:border-brand-gold transition-colors shadow-inner flex items-center justify-center">
+                  <img
+                    src={cat.thumbnailUrl}
+                    alt={cat.displayName}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                </div>
+
+                {/* 2. Category Name BELOW the Thumbnail (No folder count!) */}
+                <div className="flex items-center justify-center gap-1.5 py-0.5 px-1 flex-shrink-0">
+                  <span 
+                    className="w-2 h-2 rounded-full shadow flex-shrink-0" 
+                    style={{ backgroundColor: cat.accentColorHex }} 
+                  />
+                  <span className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-brand-gold tracking-wide truncate">
+                    {cat.displayName}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+      </div>
+    );
+  }
+
+  /* -----------------------------------------------------------------------------------
+     VIEW 2: SUBCATEGORIES VIEW
+     * User requirement:
+       "subcatagory ke andar sirf thumbnail aur uske niche subcatagory ka naam show hona chahye,
+        upar ka baar nahi show hona chahye shivam ka logo cart ka logo ye kuch nahi aana chahye"
+     ----------------------------------------------------------------------------------- */
+  if (screenMode === 'subcategories') {
+    return (
+      <div className="w-full h-full flex flex-col bg-slate-950 overflow-hidden select-none">
+        
+        {/* Minimal Navigation: Clean Back Button only (NO Shivam logo, NO Cart logo, NO clutter) */}
+        <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/80 bg-slate-900/40 flex-shrink-0">
+          <button
+            onClick={() => {
+              setScreenMode('home');
+              setShowroomScreenMode('home');
+            }}
+            className="flex items-center gap-1.5 text-xs font-bold text-slate-200 hover:text-white bg-slate-800/90 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition active:scale-95 border border-slate-700/60 shadow-sm"
+          >
+            <ArrowLeft size={16} className="text-brand-gold" />
+            <span>Categories</span>
+          </button>
+
+          <div className="flex items-center gap-2">
+            <span 
+              className="w-2 h-2 rounded-full shadow" 
+              style={{ backgroundColor: currentCategory?.accentColorHex }} 
+            />
+            <span className="text-xs font-bold text-slate-300">
+              {currentCategory?.displayName}
+            </span>
+          </div>
+        </div>
+
+        {/* Subcategories Grid: Sirf Thumbnail aur uske Niche Subcategory ka Naam */}
+        <div className="flex-1 p-4 overflow-y-auto scrollbar-thin">
+          <div className="grid grid-cols-3 gap-4 max-w-5xl mx-auto">
+            {categorySubList.map((sub) => (
+              <button
+                key={sub.id}
+                onClick={() => handleSelectSubCategory(sub.id)}
+                className="group flex flex-col gap-2 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-center focus:outline-none"
+              >
+                {/* 1. Strict 16:9 Thumbnail Image (Pure image, no text/folder icons over it) */}
+                <div className="w-full aspect-video rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-800 group-hover:border-brand-gold transition-colors shadow-lg">
+                  <img
+                    src={sub.thumbnailUrl}
+                    alt={sub.name}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                </div>
+
+                {/* 2. Uske Niche Subcategory ka Naam */}
+                <span className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-brand-gold tracking-wide truncate px-1">
+                  {sub.name}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+      </div>
+    );
+  }
+
+  /* -----------------------------------------------------------------------------------
+     VIEW 3: SUBCATEGORY GALLERY VIEW (Products in Strict 16:9 HDTV)
+     ----------------------------------------------------------------------------------- */
+  if (screenMode === 'gallery') {
+    const activeSub = subCategories.find(s => s.id === activeSubCategoryId);
+
+    return (
+      <div className="w-full h-full flex flex-col bg-slate-950 overflow-hidden select-none">
+        
+        {/* Minimal Navigation */}
+        <div className="px-3 py-2 flex items-center justify-between border-b border-slate-800/80 bg-slate-900/40 flex-shrink-0">
+          <button
+            onClick={() => {
+              setScreenMode('subcategories');
+              setShowroomScreenMode('subcategories');
+            }}
+            className="flex items-center gap-1.5 text-xs font-bold text-slate-200 hover:text-white bg-slate-800/90 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition active:scale-95 border border-slate-700/60 shadow-sm"
+          >
+            <ArrowLeft size={16} className="text-brand-gold" />
+            <span>Subcategories</span>
+          </button>
+
+          <div className="text-xs font-bold text-brand-gold">
+            {activeSub?.name}
+          </div>
+        </div>
+
+        {/* Gallery Grid (Strict 16:9 HDTV Thumbnails, ZERO ABCD badges on top!) */}
+        <div className="flex-1 p-3 overflow-y-auto scrollbar-thin">
+          <div className="grid grid-cols-3 gap-3 max-w-5xl mx-auto">
+            {galleryPhotos.map((photo) => {
+              const orderedItems = cart.filter(c => c.photoId === photo.id);
+              const totalPiecesOrdered = orderedItems.reduce((sum, item) => sum + item.quantity, 0);
+
+              return (
+                <div
+                  key={photo.id}
+                  onClick={() => handleOpenFullImage(photo)}
+                  className="group relative aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-800 hover:border-brand-gold cursor-pointer transition-all duration-200 hover:scale-[1.02] active:scale-95 shadow-lg flex items-center justify-center"
+                >
+                  {/* Clean 16:9 Photo without any ABCD overlay or item number */}
+                  <img
+                    src={photo.imageUri}
+                    alt={photo.photoCode}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+
+                  {/* Ordered Badge if already in cart */}
+                  {totalPiecesOrdered > 0 && (
+                    <div className="absolute top-2 right-2 bg-emerald-500 text-black text-[10px] font-black px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                      <Check size={10} />
+                      <span>{totalPiecesOrdered} pcs</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+      </div>
+    );
+  }
+
+  /* -----------------------------------------------------------------------------------
+     VIEW 4: FULL IMAGE VIEW (Clean Maximized Image on Left, Dedicated SIDE PANEL on Right)
+     - Image par se arrows, dots, product number, aur gallery button hata diye gaye hain.
+     - Finger se slide / swipe karne par image change hoti hai.
+     - Gallery button, Product code, aur Cart icon ABCD ke panel me integrate hain.
+     ----------------------------------------------------------------------------------- */
+  const photo = selectedPhoto || galleryPhotos[0];
+
+  return (
+    <div className="w-full h-full flex flex-row gap-2 rounded-2xl bg-slate-950 border border-slate-800 overflow-hidden shadow-2xl p-1.5 select-none items-stretch">
+      
+      {/* LEFT/CENTER: 100% CLEAN MAXIMIZED PRODUCT IMAGE WITH FINGER SLIDE SWIPE */}
+      <div 
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        className="flex-1 h-full rounded-xl bg-black border border-slate-800/80 overflow-hidden relative flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
+        title="Swipe left or right to change image"
+      >
+        <img
+          key={photo?.imageUri}
+          src={photo?.imageUri}
+          alt={photo?.photoCode}
+          draggable={false}
+          className="w-full h-full object-contain pointer-events-none"
+        />
+
+        {/* Feedback Toast */}
+        {qtyFeedback && (
+          <div className="absolute bottom-3 right-3 z-30 bg-emerald-500 text-black font-black text-xs px-2.5 py-1 rounded-lg shadow-xl flex items-center gap-1 backdrop-blur-md animate-fadeIn pointer-events-none">
+            <Check size={12} />
+            <span>{qtyFeedback}</span>
+          </div>
+        )}
+      </div>
+
+      {/* RIGHT: COMPACT SIDE PANEL FOR ABCD (With Gallery button, Product Code, ABCD, and Cart icon) */}
+      {photo && (
+        <div className="w-[145px] sm:w-[160px] md:w-[175px] h-full rounded-2xl bg-slate-900 border border-slate-800 p-2 flex flex-col justify-between shadow-2xl flex-shrink-0">
+          
+          {/* TOP: Gallery Back Button & Product Code */}
+          <div className="flex flex-col gap-1.5">
+            <button
+              onClick={() => {
+                setScreenMode('gallery');
+                setShowroomScreenMode('gallery');
+              }}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700/80 transition active:scale-95 shadow-sm"
+              title="Back to Gallery"
+            >
+              <ArrowLeft size={13} className="text-brand-gold" />
+              <span>Gallery</span>
+            </button>
+
+            {/* Product Number in ABCD Side Panel */}
+            <div className="text-center py-1 px-1.5 rounded-lg bg-black/70 border border-slate-800 font-mono font-black text-xs text-brand-gold truncate shadow-inner">
+              {photo?.photoCode}
+            </div>
+          </div>
+
+          {/* MIDDLE: ABCD Steppers (Enlarged, high-contrast, finger-friendly) */}
+          <div className="flex flex-col gap-2 py-1 overflow-y-auto scrollbar-none">
+            {['A', 'B', 'C', 'D'].slice(0, photo.itemCount).map(option => {
+              const isAvailable = photo[`${option.toLowerCase()}Available` as keyof typeof photo];
+              const currentQty = getOptionQty(photo.id, option, photo.defaultQuantity);
+              const badge = letterBadgeColors[option];
+
+              if (!isAvailable) {
+                return (
+                  <div 
+                    key={option} 
+                    className="flex items-center justify-between p-1.5 rounded-xl bg-slate-950/60 border border-slate-800/80 opacity-40"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-500 font-black text-xs flex items-center justify-center">
+                      {option}
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono font-bold px-2">OUT</span>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={option}
+                  className="flex items-center justify-between p-1 rounded-xl bg-slate-950 border border-slate-800 hover:border-brand-gold/60 transition shadow-sm gap-1.5"
+                >
+                  {/* Letter Badge (A, B, C, D) */}
+                  <div 
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg ${badge.bg} ${badge.text} font-black text-xs sm:text-sm flex items-center justify-center shadow flex-shrink-0`}
+                  >
+                    {option}
+                  </div>
+
+                  {/* Large Finger-Friendly (-) Count (+) Stepper */}
+                  <div className="flex items-center bg-slate-900 border border-slate-700/90 rounded-lg overflow-hidden flex-1 justify-between">
+                    {/* Big Minus Button */}
+                    <button
+                      onClick={() => handleUpdateQty(photo, option, currentQty - (photo.defaultQuantity >= 12 ? 6 : 1))}
+                      disabled={currentQty <= 0}
+                      className={`w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center transition rounded-l-md active:scale-90 ${
+                        currentQty > 0 
+                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-100' 
+                          : 'bg-slate-900 text-slate-600 opacity-40 cursor-not-allowed'
+                      }`}
+                      title="Decrease Quantity"
+                    >
+                      <Minus size={15} strokeWidth={2.5} />
+                    </button>
+
+                    {/* Centered Quantity Number */}
+                    <span className="flex-1 text-center font-mono font-black text-xs sm:text-sm text-brand-gold select-none px-1">
+                      {currentQty}
+                    </span>
+
+                    {/* Big Plus Button (Amber high visibility) */}
+                    <button
+                      onClick={() => {
+                        const step = photo.defaultQuantity >= 12 ? 6 : 1;
+                        handleUpdateQty(photo, option, currentQty === 0 ? photo.defaultQuantity : currentQty + step);
+                      }}
+                      className="w-8 h-8 sm:w-9 sm:h-9 bg-amber-500 hover:bg-amber-400 active:bg-amber-300 text-black flex items-center justify-center transition font-black rounded-r-md active:scale-90 shadow-sm"
+                      title="Increase Quantity / Add"
+                    >
+                      <Plus size={15} strokeWidth={2.5} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* BOTTOM: Cart Button with ShoppingBag Icon */}
+          <button
+            onClick={() => setIsCartOpen(true)}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-xs shadow-lg transition active:scale-95 border border-amber-400/50"
+            title="Open Order Slip / Cart"
+          >
+            <ShoppingBag size={14} />
+            <span>{totalCartPieces > 0 ? `${totalCartPieces} pcs` : 'View Cart'}</span>
+          </button>
+
+        </div>
+      )}
+
+    </div>
+  );
+}
