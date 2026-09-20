@@ -1,6 +1,8 @@
 import { useAppStore } from '../store';
 import { Trash2, Send, Minus, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { OrderVoiceRecorder } from '../components/OrderVoiceRecorder';
 
 export function Cart() {
   const cart = useAppStore(state => state.cart);
@@ -10,12 +12,15 @@ export function Cart() {
   const placeOrder = useAppStore(state => state.placeOrder);
   const navigate = useNavigate();
 
+  const [orderNotes, setOrderNotes] = useState('');
+  const [orderVoiceUrl, setOrderVoiceUrl] = useState<string | undefined>(undefined);
+
   const handlePlaceOrder = () => {
     if (!currentCustomer) {
       alert('Please login as a customer first!');
       return;
     }
-    placeOrder();
+    placeOrder({ notes: orderNotes, voiceNoteUrl: orderVoiceUrl });
     alert('Order placed successfully!');
     navigate('/');
   };
@@ -90,6 +95,17 @@ export function Cart() {
         ) : (
           <div className="bg-amber-500/10 text-amber-400 border border-amber-500/20 p-3 rounded-lg text-sm">
             Please login from the top right menu to place an order.
+          </div>
+        )}
+
+        {currentCustomer && (
+          <div className="mt-5">
+            <OrderVoiceRecorder
+              voiceNoteUrl={orderVoiceUrl}
+              notes={orderNotes}
+              onVoiceChange={setOrderVoiceUrl}
+              onNotesChange={setOrderNotes}
+            />
           </div>
         )}
 

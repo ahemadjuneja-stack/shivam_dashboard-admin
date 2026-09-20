@@ -1,6 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../store';
-import { CatalogPhoto, MainCategory, SubCategory } from '../types';
+import { CatalogPhoto, SubCategory, ProductVariant } from '../types';
+import { checkProductCodeExistsInFirebase } from '../services/firebaseSync';
+import { db } from '../firebase';
+import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,72 +13,251 @@ import {
   Upload,
   Check,
   Sparkles,
-  Heart,
-  Edit2
+  Edit2,
+  AlertTriangle,
+  Layers,
+  FolderPlus,
+  ThumbsUp,
+  Trash2
 } from 'lucide-react';
 
 interface VariantItem {
+  id: string;
   letter: string;
-  name: string;
+  label: string;
+  minQuantity: number;
   quantity: number;
 }
 
 interface StagedPhoto {
   id: string;
   imageUri: string;
-  photoCode: string; // e.g. "CH 1"
+  photoCode: string;
+  title?: string;
+  name?: string;
   categoryId: string;
-  categoryName: string; // e.g. "COSMETIC"
+  categoryName: string;
   subCategoryId: string;
-  subCategoryName: string; // e.g. "H PERFUME"
-  isWishlist: boolean;
+  subCategoryName: string;
   variants: VariantItem[];
   mrpText?: string;
+  defaultQuantity?: number;
+  isHidden?: boolean;
 }
 
 interface ProductUploadEditorProps {
   onClose: () => void;
   onSuccess?: () => void;
+  initialPhoto?: CatalogPhoto | null;
 }
 
-export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClose, onSuccess }) => {
-  const { subCategories, addMultiplePhotos, addSubCategory } = useAppStore();
+interface DuplicateState {
+  existingProduct: CatalogPhoto;
+  stagedIndex: number;
+  attemptedCode: string;
+  newImageUri: string;
+}
+
+export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClose, onSuccess, initialPhoto }) => {
+  const { categories, subCategories, photos, addMultiplePhotos, updatePhoto, deletePhoto, addSubCategory } = useAppStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Clean initial state: no sample photo, waiting for user to upload photo
+  // Staged photos list
   const [stagedPhotos, setStagedPhotos] = useState<StagedPhoto[]>([]);
-
   const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [isEditingCode, setIsEditingCode] = useState(false);
-  const [isEditingCategory, setIsEditingCategory] = useState(false);
-  const [isEditingSubCategory, setIsEditingSubCategory] = useState(false);
-  const [customSubCategoryInput, setCustomSubCategoryInput] = useState('');
 
-  // Position change state ("upar number badal sake jis se hum jis image ko jahan rakhna ho waha rakh sake")
+  // Mandatory Category & Subcategory selection state (NO DEFAULT SELECTION)
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState<string>('');
+  const [customSubCategoryInput, setCustomSubCategoryInput] = useState<string>('');
+  const [showNewSubCatInput, setShowNewSubCatInput] = useState<boolean>(false);
+  const [categoryValidationError, setCategoryValidationError] = useState<string | null>(null);
+
+  // Editing state
+  const [isEditingCode, setIsEditingCode] = useState(false);
+  const [codeInputValue, setCodeInputValue] = useState('');
+  const [editingVariantIndex, setEditingVariantIndex] = useState<number | null>(null);
+
+  // Position change state
   const [isChangingPosition, setIsChangingPosition] = useState(false);
   const [targetPositionInput, setTargetPositionInput] = useState('1');
 
-  // Multi-upload configuration modal (removed)
-  // const [showUploadModal, setShowUploadModal] = useState(false);
-  // const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  // const [batchCategory, setBatchCategory] = useState<string>(MainCategory.COSMETICS);
-  // const [batchSubCategory, setBatchSubCategory] = useState<string>('H PERFUME');
-  // const [batchCodePrefix, setBatchCodePrefix] = useState<string>('CH');
-  // const [batchVariantCount, setBatchVariantCount] = useState<number>(2);
-  // const [batchVariantStyle, setBatchVariantStyle] = useState<'ALPHA' | 'NUMERIC' | 'CUSTOM'>('ALPHA');
-  // const [batchCustomLabelsInput, setBatchCustomLabelsInput] = useState<string>('1KG, 2KG, 5KG');
-  const [editingVariantIndex, setEditingVariantIndex] = useState<number | null>(null);
+  // Duplicate Code Detection Modal State
+  const [duplicateModal, setDuplicateModal] = useState<DuplicateState | null>(null);
+  const [customNewCodeInput, setCustomNewCodeInput] = useState<string>('');
 
-  // Notification toast
+  // Success Animation State
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+
+  // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'info' | 'warn' | 'success'>('info');
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, type: 'info' | 'warn' | 'success' = 'info') => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setToastType(type);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const currentPhoto: StagedPhoto | undefined = stagedPhotos[currentIndex];
+
+  const handleDeleteExistingProduct = () => {
+    if (initialPhoto && initialPhoto.id) {
+      if (window.confirm(`Are you sure you want to delete product [${initialPhoto.photoCode}]?`)) {
+        deletePhoto(initialPhoto.id);
+        showToast('Product deleted successfully', 'success');
+        if (onSuccess) onSuccess();
+        onClose();
+      }
+    }
+  };
+
+  const toggleVisibility = async (productId: string, currentHiddenState: boolean) => {
+    try {
+      const newHiddenState = !currentHiddenState;
+      const productRef = doc(db, 'products', productId);
+
+      try {
+        await updateDoc(productRef, {
+          isHidden: newHiddenState,
+          status: newHiddenState ? 'hidden' : 'active',
+          isVisible: !newHiddenState,
+          hideFromApk: newHiddenState,
+          updatedAt: serverTimestamp()
+        });
+      } catch (e) {
+        await setDoc(productRef, {
+          id: productId,
+          isHidden: newHiddenState,
+          status: newHiddenState ? 'hidden' : 'active',
+          isVisible: !newHiddenState,
+          hideFromApk: newHiddenState,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+
+      try {
+        await setDoc(doc(db, 'photos', productId), {
+          isHidden: newHiddenState,
+          status: newHiddenState ? 'hidden' : 'active',
+          isVisible: !newHiddenState,
+          hideFromApk: newHiddenState,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      } catch (_) {}
+
+      if (currentPhoto) {
+        const updated = [...stagedPhotos];
+        updated[currentIndex] = { ...currentPhoto, isHidden: newHiddenState };
+        setStagedPhotos(updated);
+      }
+
+      updatePhoto(productId, {
+        isHidden: newHiddenState,
+        isVisible: !newHiddenState,
+        status: newHiddenState ? 'hidden' : 'active'
+      });
+
+      showToast(
+        newHiddenState ? "Updated: Product Hidden from APK" : "Updated: Product Visible in APK",
+        "success"
+      );
+    } catch (err) {
+      console.error("Failed to toggle product visibility in Firestore:", err);
+      showToast("Failed to update product visibility in Firestore", "warn");
+    }
+  };
+
+  // Pre-fill staged photos if initialPhoto prop is passed
+  useEffect(() => {
+    if (initialPhoto) {
+      const photoCat = categories.find(c => c.id === initialPhoto.categoryId);
+      const photoSub = subCategories.find(s => s.id === initialPhoto.subCategoryId);
+
+      let mappedVariants: VariantItem[] = [];
+      if (initialPhoto.variants && initialPhoto.variants.length > 0) {
+        mappedVariants = initialPhoto.variants.map((v, i) => ({
+          id: v.id || `v-${i}-${Date.now()}`,
+          letter: v.label || `Option ${i + 1}`,
+          label: v.label || `Option ${i + 1}`,
+          minQuantity: typeof v.minQuantity === 'number' ? v.minQuantity : (typeof v.quantity === 'number' ? v.quantity : 1),
+          quantity: typeof v.minQuantity === 'number' ? v.minQuantity : (typeof v.quantity === 'number' ? v.quantity : 1)
+        }));
+      } else if (initialPhoto.customLabels && initialPhoto.customLabels.length > 0) {
+        mappedVariants = initialPhoto.customLabels.map((lbl, i) => ({
+          id: `v-${i}-${Date.now()}`,
+          letter: lbl,
+          label: lbl,
+          minQuantity: initialPhoto.defaultQuantity || 1,
+          quantity: initialPhoto.defaultQuantity || 1
+        }));
+      } else {
+        mappedVariants = [
+          { id: `v1-${Date.now()}`, letter: 'A', label: 'A', minQuantity: initialPhoto.defaultQuantity || 1, quantity: initialPhoto.defaultQuantity || 1 },
+          { id: `v2-${Date.now()}`, letter: 'B', label: 'B', minQuantity: initialPhoto.defaultQuantity || 1, quantity: initialPhoto.defaultQuantity || 1 }
+        ];
+      }
+
+      const stagedItem: StagedPhoto = {
+        id: initialPhoto.id,
+        imageUri: initialPhoto.imageUri,
+        photoCode: initialPhoto.photoCode,
+        title: initialPhoto.title || initialPhoto.photoCode,
+        name: initialPhoto.name || initialPhoto.photoCode,
+        categoryId: initialPhoto.categoryId || '',
+        categoryName: photoCat?.displayName || '',
+        subCategoryId: initialPhoto.subCategoryId || '',
+        subCategoryName: photoSub?.name || initialPhoto.subCategoryName || '',
+        variants: mappedVariants,
+        mrpText: initialPhoto.description || 'MRP : 999/-',
+        defaultQuantity: initialPhoto.defaultQuantity || 1,
+        isHidden: initialPhoto.isHidden || false
+      };
+
+      setStagedPhotos([stagedItem]);
+      setCurrentIndex(0);
+      setSelectedCategoryId(initialPhoto.categoryId || '');
+      setSelectedSubCategoryId(initialPhoto.subCategoryId || '');
+      setCodeInputValue(initialPhoto.photoCode);
+    }
+  }, [initialPhoto, categories, subCategories]);
+
+  // Sync code input value when switching current photo
+  useEffect(() => {
+    if (currentPhoto) {
+      setCodeInputValue(currentPhoto.photoCode);
+    }
+  }, [currentIndex, currentPhoto?.photoCode]);
+
+  // Reset form after successful upload to fresh, blank upload state
+  const handleResetForm = () => {
+    setStagedPhotos([]);
+    setCurrentIndex(0);
+    setSelectedCategoryId('');
+    setSelectedSubCategoryId('');
+    setCustomSubCategoryInput('');
+    setShowNewSubCatInput(false);
+    setCategoryValidationError(null);
+    setIsEditingCode(false);
+    setCodeInputValue('');
+    setEditingVariantIndex(null);
+    setIsChangingPosition(false);
+    setShowSuccessModal(false);
+    if (onSuccess) {
+      onSuccess();
+    }
+  };
+
+  // Auto-dismiss success overlay after 1.5 seconds and reset form cleanly to blank upload state
+  useEffect(() => {
+    if (showSuccessModal) {
+      const timer = setTimeout(() => {
+        handleResetForm();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [showSuccessModal]);
 
   // Navigate photos
   const handlePrev = () => {
@@ -92,7 +274,7 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
   const handleApplyPositionChange = () => {
     const target = parseInt(targetPositionInput, 10);
     if (isNaN(target) || target < 1 || target > stagedPhotos.length) {
-      showToast(`Please enter a valid number between 1 and ${stagedPhotos.length}`);
+      showToast(`Please enter a valid number between 1 and ${stagedPhotos.length}`, 'warn');
       setIsChangingPosition(false);
       return;
     }
@@ -110,7 +292,7 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
     setStagedPhotos(updated);
     setCurrentIndex(targetIndex);
     setIsChangingPosition(false);
-    showToast(`Image moved to position ${target} of ${stagedPhotos.length}`);
+    showToast(`Image moved to position ${target} of ${stagedPhotos.length}`, 'info');
   };
 
   // Swap with next photo
@@ -123,7 +305,7 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
     updated[nextIdx] = temp;
     setStagedPhotos(updated);
     setCurrentIndex(nextIdx);
-    showToast(`Swapped with position ${nextIdx + 1}`);
+    showToast(`Swapped with position ${nextIdx + 1}`, 'info');
   };
 
   // Delete current photo
@@ -131,34 +313,324 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
     if (stagedPhotos.length <= 1) {
       setStagedPhotos([]);
       setCurrentIndex(0);
-      showToast('Photo removed. Returned to upload screen.');
+      showToast('Photo removed. Ready for new upload.', 'info');
       return;
     }
     const updated = stagedPhotos.filter((_, idx) => idx !== currentIndex);
     setStagedPhotos(updated);
     setCurrentIndex(prev => Math.min(prev, updated.length - 1));
-    showToast('Photo removed from staging');
+    showToast('Photo removed from staging', 'info');
   };
 
-  // Variants management
+  // ---------------------------------------------------------------------------
+  // 1. STRICT FILE NAME AUTO-DETECTION (No re-typing needed)
+  // ---------------------------------------------------------------------------
+  const extractCodeFromFileName = (fileName: string): string => {
+    // Exact file name without extension e.g., "HG 201.jpg" -> "HG 201"
+    const baseName = fileName.replace(/\.[^/.]+$/, "").trim();
+    return baseName || fileName;
+  };
+
+  // Read file as 16:9 optimized Data URL
+  const readFileAsDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          const MAX_SIZE = 960;
+          if (width > height && width > MAX_SIZE) {
+            height = Math.round((height * MAX_SIZE) / width);
+            width = MAX_SIZE;
+          } else if (height > MAX_SIZE) {
+            width = Math.round((width * MAX_SIZE) / height);
+            height = MAX_SIZE;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+          } else {
+            resolve(e.target?.result as string);
+          }
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // ---------------------------------------------------------------------------
+  // 2. HANDLE FILE(S) SELECTION & INSTANT DUPLICATE DETECTION
+  // ---------------------------------------------------------------------------
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const fileList = Array.from(files);
+    const newStagedList: StagedPhoto[] = [];
+    const duplicatesFound: { code: string; fileIndex: number; existing: CatalogPhoto }[] = [];
+
+    // Get current category names if selected
+    const currentCatObj = categories.find(c => c.id === selectedCategoryId);
+    const currentSubObj = subCategories.find(s => s.id === selectedSubCategoryId);
+
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      const dataUrl = await readFileAsDataUrl(file);
+      
+      // Feature 1: Automatically extract Product Code/Name from original filename
+      const baseName = extractCodeFromFileName(file.name);
+
+      // Default variants start with 'A' and 'B' with default minQuantity = 1
+      const defaultVariants: VariantItem[] = [
+        { id: `v1-${i}-${Date.now()}`, letter: 'A', label: 'A', minQuantity: 1, quantity: 1 },
+        { id: `v2-${i}-${Date.now()}`, letter: 'B', label: 'B', minQuantity: 1, quantity: 1 }
+      ];
+
+      const stagedItem: StagedPhoto = {
+        id: `staged-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
+        imageUri: dataUrl,
+        photoCode: baseName,
+        title: baseName,
+        name: baseName,
+        categoryId: selectedCategoryId || '',
+        categoryName: currentCatObj?.displayName || '',
+        subCategoryId: selectedSubCategoryId || '',
+        subCategoryName: currentSubObj?.name || '',
+        variants: defaultVariants,
+        mrpText: 'MRP : 999/-',
+        defaultQuantity: 1
+      };
+
+      newStagedList.push(stagedItem);
+
+      // Query Firestore & local store for duplicate product code/name
+      const existing = await checkProductCodeExistsInFirebase(baseName);
+      if (existing) {
+        duplicatesFound.push({
+          code: baseName,
+          fileIndex: stagedPhotos.length + i,
+          existing
+        });
+      }
+    }
+
+    const updatedList = [...stagedPhotos, ...newStagedList];
+    setStagedPhotos(updatedList);
+    setCurrentIndex(stagedPhotos.length);
+    e.target.value = '';
+
+    // If duplicate detected, trigger comparison popup for the first duplicate
+    if (duplicatesFound.length > 0) {
+      const firstDup = duplicatesFound[0];
+      const dupStaged = updatedList[firstDup.fileIndex];
+      setCustomNewCodeInput(`${firstDup.code}_NEW`);
+      setDuplicateModal({
+        existingProduct: firstDup.existing,
+        stagedIndex: firstDup.fileIndex,
+        attemptedCode: firstDup.code,
+        newImageUri: dupStaged ? dupStaged.imageUri : ''
+      });
+      showToast(`⚠️ Duplicate detected: "${firstDup.code}" already exists!`, 'warn');
+    } else {
+      showToast(`Added ${newStagedList.length} photo(s) using original file names.`, 'success');
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // CHECK DUPLICATE ON MANUAL CODE / NAME EDIT
+  // ---------------------------------------------------------------------------
+  const handleSaveEditedCode = async () => {
+    if (!currentPhoto) return;
+    const cleanCode = codeInputValue.trim();
+    if (!cleanCode) {
+      setIsEditingCode(false);
+      return;
+    }
+
+    // Check if name changed
+    if (cleanCode === currentPhoto.photoCode) {
+      setIsEditingCode(false);
+      return;
+    }
+
+    // Check in Firestore & database
+    const existing = await checkProductCodeExistsInFirebase(cleanCode);
+    if (existing) {
+      setCustomNewCodeInput(`${cleanCode}_NEW`);
+      setDuplicateModal({
+        existingProduct: existing,
+        stagedIndex: currentIndex,
+        attemptedCode: cleanCode,
+        newImageUri: currentPhoto.imageUri
+      });
+      setIsEditingCode(false);
+      return;
+    }
+
+    // Unique name, save to staged photo
+    updateCurrentPhoto({ photoCode: cleanCode, title: cleanCode, name: cleanCode });
+    setIsEditingCode(false);
+    showToast(`Product name set to "${cleanCode}"`, 'success');
+  };
+
+  // Handle Duplicate Modal Actions
+  const handleDuplicateEditExisting = () => {
+    if (!duplicateModal) return;
+    const { existingProduct, stagedIndex } = duplicateModal;
+    
+    // Load existing product into current staged item
+    const updated = [...stagedPhotos];
+    if (updated[stagedIndex]) {
+      updated[stagedIndex] = {
+        ...updated[stagedIndex],
+        photoCode: existingProduct.photoCode,
+        title: existingProduct.photoCode,
+        name: existingProduct.photoCode,
+        categoryId: existingProduct.categoryId || updated[stagedIndex].categoryId,
+        subCategoryId: existingProduct.subCategoryId || updated[stagedIndex].subCategoryId,
+        subCategoryName: existingProduct.subCategoryName || updated[stagedIndex].subCategoryName,
+        defaultQuantity: existingProduct.defaultQuantity || 1,
+        mrpText: existingProduct.description || updated[stagedIndex].mrpText
+      };
+      setStagedPhotos(updated);
+    }
+    setDuplicateModal(null);
+    showToast(`Loaded existing product data for "${existingProduct.photoCode}".`, 'info');
+  };
+
+  const handleDuplicateChangeCode = (newUniqueCode: string) => {
+    if (!duplicateModal) return;
+    const { stagedIndex } = duplicateModal;
+    const clean = newUniqueCode.trim();
+    if (!clean) return;
+
+    const updated = [...stagedPhotos];
+    if (updated[stagedIndex]) {
+      updated[stagedIndex] = {
+        ...updated[stagedIndex],
+        photoCode: clean,
+        title: clean,
+        name: clean
+      };
+      setStagedPhotos(updated);
+    }
+    setDuplicateModal(null);
+    showToast(`Product name updated to "${clean}".`, 'success');
+  };
+
+  // ---------------------------------------------------------------------------
+  // 3. MANDATORY CATEGORY & SUBCATEGORY SELECTION LOGIC
+  // ---------------------------------------------------------------------------
+  const handleCategoryChange = (newCatId: string) => {
+    setSelectedCategoryId(newCatId);
+    setSelectedSubCategoryId('');
+    setCategoryValidationError(null);
+
+    const catObj = categories.find(c => c.id === newCatId);
+    const catName = catObj ? catObj.displayName : '';
+
+    if (currentPhoto) {
+      updateCurrentPhoto({
+        categoryId: newCatId,
+        categoryName: catName,
+        subCategoryId: '',
+        subCategoryName: ''
+      });
+    }
+  };
+
+  const handleSubCategoryChange = (newSubId: string) => {
+    setSelectedSubCategoryId(newSubId);
+    setCategoryValidationError(null);
+
+    const subObj = subCategories.find(s => s.id === newSubId);
+    const subName = subObj ? subObj.name : '';
+
+    if (currentPhoto) {
+      updateCurrentPhoto({
+        subCategoryId: newSubId,
+        subCategoryName: subName
+      });
+    }
+  };
+
+  const handleApplyCategoryToAllStaged = () => {
+    if (!selectedCategoryId || !selectedSubCategoryId) {
+      setCategoryValidationError('Please select both Category and Subcategory first.');
+      return;
+    }
+
+    const catObj = categories.find(c => c.id === selectedCategoryId);
+    const subObj = subCategories.find(s => s.id === selectedSubCategoryId);
+
+    const updated = stagedPhotos.map(p => ({
+      ...p,
+      categoryId: selectedCategoryId,
+      categoryName: catObj?.displayName || '',
+      subCategoryId: selectedSubCategoryId,
+      subCategoryName: subObj?.name || ''
+    }));
+
+    setStagedPhotos(updated);
+    setCategoryValidationError(null);
+    showToast(`Applied ${catObj?.displayName} > ${subObj?.name} to all ${stagedPhotos.length} photos!`, 'success');
+  };
+
+  const handleCreateNewSubCategory = () => {
+    const trimmed = customSubCategoryInput.trim();
+    if (!trimmed || !selectedCategoryId) return;
+
+    const newSubId = `sub-${Date.now()}`;
+    const newSub: SubCategory = {
+      id: newSubId,
+      categoryId: selectedCategoryId,
+      name: trimmed,
+      iconName: 'sparkles',
+      thumbnailUrl: currentPhoto?.imageUri || 'https://images.unsplash.com/photo-1599643478514-4a410f0a82ef?auto=format&fit=crop&q=80&w=600',
+      photoCount: 1,
+      sortOrder: subCategories.length + 1
+    };
+
+    addSubCategory(newSub);
+    setSelectedSubCategoryId(newSubId);
+    setCustomSubCategoryInput('');
+    setShowNewSubCatInput(false);
+    setCategoryValidationError(null);
+
+    if (currentPhoto) {
+      updateCurrentPhoto({
+        subCategoryId: newSubId,
+        subCategoryName: trimmed
+      });
+    }
+
+    showToast(`Created new subcategory: "${trimmed}"`, 'success');
+  };
+
+  // ---------------------------------------------------------------------------
+  // 4. FLEXIBLE CUSTOM VARIANT LABELS ("A", "Black", "1kg", "100ml", etc.) & MIN QUANTITY
+  // ---------------------------------------------------------------------------
   const handleAddVariant = () => {
     if (!currentPhoto) return;
     const currentVariants = currentPhoto.variants;
-    // If previous variant was numeric (e.g. 1, 2)
-    const lastVar = currentVariants[currentVariants.length - 1];
-    let nextLabel = '';
-    if (lastVar && !isNaN(Number(lastVar.letter))) {
-      nextLabel = String(Number(lastVar.letter) + 1);
-    } else if (lastVar && lastVar.letter.endsWith('KG')) {
-      const num = parseInt(lastVar.letter);
-      nextLabel = !isNaN(num) ? `${num + 1}KG` : `${currentVariants.length + 1}KG`;
-    } else {
-      nextLabel = String.fromCharCode(65 + currentVariants.length); // C, D, etc.
-    }
-
+    const nextIndex = currentVariants.length + 1;
+    
     const newVariant: VariantItem = {
-      letter: nextLabel,
-      name: `Option ${nextLabel}`,
+      id: `v${nextIndex}-${Date.now()}`,
+      letter: `Option ${nextIndex}`,
+      label: `Option ${nextIndex}`,
+      minQuantity: 1,
       quantity: 1
     };
 
@@ -169,11 +641,12 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
       return p;
     });
     setStagedPhotos(updated);
+    showToast(`Added Variant ${nextIndex}`, 'info');
   };
 
   const handleRemoveLastVariant = () => {
     if (!currentPhoto || currentPhoto.variants.length <= 1) {
-      showToast('At least 1 variant is required.');
+      showToast('At least 1 variant is required.', 'warn');
       return;
     }
 
@@ -186,15 +659,15 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
     setStagedPhotos(updated);
   };
 
-  const handleRemoveVariantByLetter = (letter: string) => {
+  const handleRemoveVariantByIndex = (vIndex: number) => {
     if (!currentPhoto || currentPhoto.variants.length <= 1) {
-      showToast('At least 1 variant is required.');
+      showToast('At least 1 variant is required.', 'warn');
       return;
     }
 
     const updated = stagedPhotos.map((p, idx) => {
       if (idx === currentIndex) {
-        const remaining = p.variants.filter(v => v.letter !== letter);
+        const remaining = p.variants.filter((_, i) => i !== vIndex);
         return { ...p, variants: remaining };
       }
       return p;
@@ -202,134 +675,136 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
     setStagedPhotos(updated);
   };
 
-  // Update specific variant's label/letter (e.g. change 'A' to '1' or '1KG')
-  const handleUpdateVariantLetter = (vIndex: number, newLetter: string) => {
+  // Update specific variant label (Allows ANY text: "A", "B", "Black", "Maroon", "1kg", "500gm", "100ml")
+  const handleUpdateVariantLabel = (vIndex: number, newLabel: string) => {
     if (!currentPhoto) return;
     const updatedVariants = currentPhoto.variants.map((v, idx) => {
       if (idx === vIndex) {
-        return { ...v, letter: newLetter };
+        return { ...v, label: newLabel, letter: newLabel };
       }
       return v;
     });
     updateCurrentPhoto({ variants: updatedVariants });
   };
 
-  // File selection for multiple photos
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const fileList = Array.from(files);
-    
-    const newStagedList: StagedPhoto[] = [];
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      const dataUrl = await readFileAsDataUrl(file);
-      
-      const variants: VariantItem[] = [
-        { letter: 'A', name: 'Variant A', quantity: 1 },
-        { letter: 'B', name: 'Variant B', quantity: 1 }
-      ];
-
-      const seqNum = stagedPhotos.length + i + 1;
-      const code = `CH ${seqNum}`;
-
-      newStagedList.push({
-        id: `staged-${Date.now()}-${i}`,
-        imageUri: dataUrl,
-        photoCode: code,
-        categoryId: MainCategory.COSMETICS,
-        categoryName: 'COSMETIC',
-        subCategoryId: 'sub-h-perfume',
-        subCategoryName: 'H PERFUME',
-        isWishlist: false,
-        variants,
-        mrpText: 'MRP : 999/- (100ml)'
-      });
-    }
-
-    setStagedPhotos(prev => [...prev, ...newStagedList]);
-    setCurrentIndex(stagedPhotos.length); // Jump to the newly added first photo
-    showToast(`Added ${newStagedList.length} photos! Adjust position and details as needed.`);
-    
-    e.target.value = '';
-  };
-
-  const readFileAsDataUrl = (file: File): Promise<string> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target?.result as string);
-      reader.readAsDataURL(file);
+  // Update starting minQuantity for specific variant (allows 0 for out-of-stock)
+  const handleUpdateVariantQuantity = (vIndex: number, newQty: number) => {
+    if (!currentPhoto) return;
+    const val = Math.max(0, isNaN(newQty) ? 0 : newQty);
+    const updatedVariants = currentPhoto.variants.map((v, idx) => {
+      if (idx === vIndex) {
+        return { ...v, quantity: val, minQuantity: val };
+      }
+      return v;
     });
+    updateCurrentPhoto({ variants: updatedVariants });
   };
 
-  // Update current photo fields
+  // Helper to update current photo partial
   const updateCurrentPhoto = (data: Partial<StagedPhoto>) => {
     setStagedPhotos(prev =>
       prev.map((p, idx) => (idx === currentIndex ? { ...p, ...data } : p))
     );
   };
 
-  // "→ Create All Products"
+  // ---------------------------------------------------------------------------
+  // 5. CREATE ALL PRODUCTS & SAVE EXACT 'variants' SCHEMA TO FIRESTORE
+  // ---------------------------------------------------------------------------
   const handleCreateAllProducts = () => {
     if (stagedPhotos.length === 0) {
-      showToast('No photos to upload.');
+      showToast('Please upload photo(s) first.', 'warn');
       return;
     }
 
-    const newCatalogPhotos: CatalogPhoto[] = stagedPhotos.map((sp, idx) => {
-      // Register custom subcategory if needed
-      const subId = sp.subCategoryId || `sub-${sp.subCategoryName.toLowerCase().replace(/\s+/g, '-')}`;
-      const existingSub = subCategories.find(s => s.id === subId);
-      if (!existingSub) {
-        const newSubCat: SubCategory = {
-          id: subId,
-          categoryId: sp.categoryId,
-          name: sp.subCategoryName,
-          iconName: 'sparkles',
-          thumbnailUrl: sp.imageUri,
-          photoCount: 1,
-          sortOrder: 99
-        };
-        addSubCategory(newSubCat);
-      }
+    // MANDATORY VALIDATION: Check Category and Subcategory for every photo
+    const missingCategoryPhoto = stagedPhotos.find(p => !p.categoryId || !p.subCategoryId);
+    if (missingCategoryPhoto) {
+      setCategoryValidationError('⚠️ Please select both Category and Subcategory before creating products!');
+      showToast('Mandatory selection: Please choose Category & Subcategory!', 'warn');
+      return;
+    }
 
-      return {
-        id: `p-custom-${Date.now()}-${idx}`,
+    setCategoryValidationError(null);
+
+    const existingPhotoIds = new Set(photos.map(p => p.id));
+    const newPhotosToCreate: CatalogPhoto[] = [];
+
+    stagedPhotos.forEach((sp, idx) => {
+      const subId = sp.subCategoryId;
+      const customLabels = sp.variants.map(v => v.label || v.letter);
+      const startingDefaultQty = typeof sp.variants[0]?.minQuantity === 'number'
+        ? sp.variants[0].minQuantity
+        : (typeof sp.variants[0]?.quantity === 'number' ? sp.variants[0].quantity : 1);
+
+      // Exact variants schema object array
+      const formattedVariants: ProductVariant[] = sp.variants.map((v, vIdx) => {
+        const qty = typeof v.minQuantity === 'number' ? v.minQuantity : (typeof v.quantity === 'number' ? v.quantity : 1);
+        const isAvail = qty > 0;
+        return {
+          id: v.id || `v${vIdx + 1}`,
+          label: v.label || v.letter,
+          minQuantity: qty,
+          quantity: qty,
+          isAvailable: isAvail,
+          inStock: isAvail
+        };
+      });
+
+      const photoId = (sp.id && existingPhotoIds.has(sp.id))
+        ? sp.id
+        : `p-up-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 5)}`;
+
+      const photoData: CatalogPhoto = {
+        id: photoId,
         categoryId: sp.categoryId,
         subCategoryId: subId,
-        subCategoryName: sp.subCategoryName,
-        photoCode: sp.photoCode,
+        subCategoryName: sp.subCategoryName || 'General',
+        photoCode: sp.photoCode.trim(),
+        title: sp.photoCode.trim(),
+        name: sp.photoCode.trim(),
         imageUri: sp.imageUri,
         itemCount: sp.variants.length,
         aAvailable: sp.variants.length >= 1,
         bAvailable: sp.variants.length >= 2,
         cAvailable: sp.variants.length >= 3,
         dAvailable: sp.variants.length >= 4,
-        customLabels: sp.variants.map(v => v.letter),
-        defaultQuantity: 12,
+        customLabels,
+        variants: formattedVariants,
+        defaultQuantity: startingDefaultQty,
         sortOrder: idx + 1,
-        description: sp.mrpText || ''
+        description: sp.mrpText || '',
+        isHidden: sp.isHidden || false
       };
+
+      if (sp.id && existingPhotoIds.has(sp.id)) {
+        updatePhoto(sp.id, photoData);
+      } else {
+        newPhotosToCreate.push(photoData);
+      }
     });
 
-    addMultiplePhotos(newCatalogPhotos);
-    showToast(`Successfully created and published ${newCatalogPhotos.length} products to Showroom!`);
-
-    if (onSuccess) {
-      setTimeout(() => onSuccess(), 1000);
-    } else {
-      setTimeout(() => onClose(), 1200);
+    if (newPhotosToCreate.length > 0) {
+      addMultiplePhotos(newPhotosToCreate);
     }
+
+    setShowSuccessModal(true);
   };
+
+  const filteredSubCategories = subCategories.filter(s => s.categoryId === selectedCategoryId);
 
   return (
     <div className="fixed inset-0 z-50 bg-[#060c1c] text-white flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden select-none">
       
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-black px-4 py-2 rounded-xl font-bold text-xs shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-          <Sparkles size={16} />
+        <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5 rounded-xl font-bold text-xs shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-3 border ${
+          toastType === 'warn'
+            ? 'bg-amber-500 text-black border-amber-300'
+            : toastType === 'success'
+            ? 'bg-emerald-500 text-black border-emerald-300'
+            : 'bg-indigo-600 text-white border-indigo-400'
+        }`}>
+          {toastType === 'warn' ? <AlertTriangle size={16} /> : <Sparkles size={16} />}
           <span>{toastMessage}</span>
         </div>
       )}
@@ -344,8 +819,10 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
         className="hidden"
       />
 
-      {/* Main Layout Card (Exact Screenshot Composition) */}
-      <div className="w-full max-w-[1240px] h-[92vh] max-h-[760px] bg-[#070f23] border border-[#142444] rounded-2xl p-3 sm:p-5 flex flex-col md:flex-row gap-4 sm:gap-6 shadow-2xl relative overflow-hidden">
+      {/* =================================================================== */}
+      {/* MAIN CONTAINER (Left: Upload/Stage, Right: Single Info Panel)       */}
+      {/* =================================================================== */}
+      <div className="w-full max-w-[1280px] h-[94vh] max-h-[790px] bg-[#070f23] border border-[#142444] rounded-2xl p-3 sm:p-5 flex flex-col md:flex-row gap-4 sm:gap-6 shadow-2xl relative overflow-hidden">
         
         {/* =============================================================== */}
         {/* LEFT / CENTER STAGE: 16:9 IMAGE PREVIEW CARD WITH CONTROLS     */}
@@ -365,15 +842,20 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
                   <X size={16} className="stroke-[2.5]" />
                 </button>
 
-                {/* Upload Multiple Photos Quick Action Badge */}
+                {/* Upload More Photos Quick Action Badge */}
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  title="Upload multiple photos from your PC"
-                  className="absolute top-3 right-3 z-30 bg-[#0c2444]/90 hover:bg-[#123666] border border-slate-700 text-slate-200 hover:text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition"
+                  title="Upload more photos from your PC"
+                  className="absolute top-3 right-3 z-30 bg-[#0c2444]/90 hover:bg-[#123666] border border-slate-700 text-slate-200 hover:text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition shadow-lg"
                 >
                   <Upload size={14} className="text-amber-400" />
-                  <span>Upload Photos</span>
+                  <span>Upload More</span>
                 </button>
+
+                {/* Product Name Badge on Image */}
+                <div className="absolute top-3 left-12 z-20 bg-black/75 backdrop-blur-sm border border-purple-500/40 text-purple-200 px-2.5 py-0.5 rounded-md text-[11px] font-bold tracking-wide max-w-[280px] truncate">
+                  <span className="text-amber-300">{currentPhoto.photoCode}</span>
+                </div>
 
                 {/* Left Carousel Arrow (<) */}
                 <button
@@ -412,22 +894,17 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
                 </div>
               </div>
             ) : (
-              /* Completely clean upload area with just upload icon and Upload Photo button */
+              /* Clean Minimalist Upload Dropzone */
               <div
                 onClick={() => fileInputRef.current?.click()}
                 className="w-full max-w-[780px] aspect-[16/9] bg-[#04091a]/80 hover:bg-[#08122c] border-2 border-dashed border-slate-700/80 hover:border-amber-400/80 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all duration-200 group shadow-2xl p-6"
               >
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 group-hover:scale-105 group-hover:bg-amber-500/20 group-hover:border-amber-400 transition-all duration-200 shadow-xl mb-4">
-                  <Upload size={42} className="stroke-[2.2]" />
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 group-hover:scale-105 group-hover:bg-amber-500/20 group-hover:border-amber-400 transition-all duration-200 shadow-xl mb-3">
+                  <Upload size={36} className="stroke-[2.2]" />
                 </div>
-                <div className="text-center space-y-1.5">
-                  <span className="text-base sm:text-lg font-black tracking-wide text-white group-hover:text-amber-300 transition">
-                    Upload Photo
-                  </span>
-                  <p className="text-xs text-slate-400 font-medium">
-                    Click here to select photo from your PC
-                  </p>
-                </div>
+                <span className="text-base sm:text-lg font-black tracking-wide text-white group-hover:text-amber-300 transition">
+                  Upload Products
+                </span>
               </div>
             )}
           </div>
@@ -494,286 +971,491 @@ export const ProductUploadEditor: React.FC<ProductUploadEditorProps> = ({ onClos
         </div>
 
         {/* =============================================================== */}
-        {/* RIGHT PANEL: PRODUCT INFORMATION (Exact Screenshot Composition) */}
+        {/* RIGHT PANEL: PRODUCT INFORMATION & CONFIGURATION                */}
         {/* =============================================================== */}
-        <div className="w-full md:w-[280px] lg:w-[310px] flex flex-col justify-between flex-shrink-0 bg-[#060e22] rounded-xl p-3 sm:p-4 border border-slate-800/80">
+        <div className="w-full md:w-[440px] lg:w-[480px] min-w-[400px] flex flex-col justify-between flex-shrink-0 bg-[#060e22] rounded-2xl p-5 sm:p-6 border border-slate-800/80 overflow-y-auto custom-scrollbar gap-5">
           
-          <div className="space-y-3.5">
+          <div className="space-y-5">
             {/* 1. TOP DASHBOARD BUTTON (Dark Teal) */}
             <button
               onClick={onClose}
-              className="w-full h-10 bg-[#0c443c] hover:bg-[#11554c] text-white font-bold text-xs sm:text-sm rounded-lg flex items-center justify-center transition shadow-md active:scale-98"
+              className="w-full h-11 bg-[#0c443c] hover:bg-[#11554c] text-white font-bold text-base rounded-xl flex items-center justify-center transition shadow-md active:scale-98"
             >
               Dashboard
             </button>
 
             {/* 2. PRODUCT INFORMATION TITLE */}
-            <div className="text-center">
-              <h2 className="text-xs font-black tracking-wider text-slate-200 uppercase">
+            <div className="text-center border-b border-slate-800 pb-3">
+              <h2 className="text-base sm:text-lg font-bold tracking-wide uppercase text-white">
                 PRODUCT INFORMATION
               </h2>
             </div>
 
-            {/* 3. PURPLE PILL BUTTONS */}
-            <div className="space-y-2">
-              
-              {/* (A) Item Code Pill: "CH 1" */}
-              <div className="relative">
-                {isEditingCode ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={currentPhoto?.photoCode || ''}
-                      onChange={(e) => updateCurrentPhoto({ photoCode: e.target.value.toUpperCase() })}
-                      className="flex-1 bg-[#5b3d99] text-white font-bold text-xs py-2 px-3 rounded-lg border border-purple-300 focus:outline-none"
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => setIsEditingCode(false)}
-                      className="p-2 bg-emerald-600 rounded-lg text-white"
-                    >
-                      <Check size={14} />
-                    </button>
-                  </div>
-                ) : (
+            {/* HIDE / UNHIDE PRODUCT TOGGLE */}
+            {initialPhoto && (
+              <div className="bg-[#0a142c] p-3.5 rounded-xl border border-slate-700/80 flex items-center justify-between">
+                <div>
+                  <span className="text-xs sm:text-sm font-bold text-white block">Product Visibility (APK Hide)</span>
+                  <span className="text-[11px] text-slate-300">
+                    {currentPhoto?.isHidden ? 'Hidden from APK (Blurred in Gallery)' : 'Visible in APK'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentPhoto && currentPhoto.id) {
+                      toggleVisibility(currentPhoto.id, !!currentPhoto.isHidden);
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition shadow ${
+                    currentPhoto?.isHidden
+                      ? 'bg-red-600 text-white shadow-red-600/30'
+                      : 'bg-emerald-600 text-white shadow-emerald-600/30'
+                  }`}
+                >
+                  {currentPhoto?.isHidden ? 'Hidden (Show)' : 'Visible (Hide)'}
+                </button>
+              </div>
+            )}
+
+            {/* MANDATORY CATEGORY & SUBCATEGORY SELECTION */}
+            <div className={`p-4 rounded-xl border ${categoryValidationError ? 'bg-red-950/40 border-red-500/80 ring-1 ring-red-500' : 'bg-[#0a142c] border-slate-700/60'} space-y-3`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5">
+                  <Layers size={16} className="text-amber-400" />
+                  <span>Category & Subcategory *</span>
+                </span>
+                {stagedPhotos.length > 1 && (
                   <button
-                    onClick={() => setIsEditingCode(true)}
-                    title="Click to edit item code"
-                    className="w-full bg-[#5b3d99] hover:bg-[#6846ae] text-white font-bold text-xs py-2 px-3 rounded-lg text-center transition shadow"
+                    onClick={handleApplyCategoryToAllStaged}
+                    title="Apply selected Category & Subcategory to all staged photos"
+                    className="text-xs text-indigo-300 hover:text-white underline font-semibold"
                   >
-                    {currentPhoto?.photoCode || 'CH 1'}
+                    Apply to all ({stagedPhotos.length})
                   </button>
                 )}
               </div>
 
-              {/* (B) Category Pill: "COSMETIC" */}
-              <div className="relative">
-                <button
-                  onClick={() => setIsEditingCategory(!isEditingCategory)}
-                  title="Click to switch category"
-                  className="w-full bg-[#5b3d99] hover:bg-[#6846ae] text-white font-bold text-xs py-2 px-3 rounded-lg text-center uppercase tracking-wide transition shadow"
+              {/* Category Dropdown (NO DEFAULT SELECTION) */}
+              <div>
+                <select
+                  value={selectedCategoryId}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
+                  className={`w-full bg-[#050b18] border text-sm sm:text-base font-semibold text-white rounded-xl py-2.5 px-3.5 focus:outline-none transition ${
+                    !selectedCategoryId && categoryValidationError ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-700 focus:border-purple-400'
+                  }`}
                 >
-                  {currentPhoto?.categoryName || 'COSMETIC'}
-                </button>
-
-                {isEditingCategory && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#09152a] border border-slate-700 rounded-lg shadow-2xl py-1 z-50 text-xs">
-                    <button
-                      onClick={() => {
-                        updateCurrentPhoto({
-                          categoryId: MainCategory.COSMETICS,
-                          categoryName: 'COSMETIC'
-                        });
-                        setIsEditingCategory(false);
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-purple-900/40 text-slate-200"
-                    >
-                      COSMETICS
-                    </button>
-                    <button
-                      onClick={() => {
-                        updateCurrentPhoto({
-                          categoryId: MainCategory.IMITATION,
-                          categoryName: 'IMITATION JEWELRY'
-                        });
-                        setIsEditingCategory(false);
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-purple-900/40 text-slate-200"
-                    >
-                      IMITATION JEWELRY
-                    </button>
-                    <button
-                      onClick={() => {
-                        updateCurrentPhoto({
-                          categoryId: MainCategory.HAIR_ACCESSORIES,
-                          categoryName: 'HAIR ACCESSORIES'
-                        });
-                        setIsEditingCategory(false);
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-purple-900/40 text-slate-200"
-                    >
-                      HAIR ACCESSORIES
-                    </button>
-                  </div>
-                )}
+                  <option value="" disabled className="text-sm font-medium text-slate-400">-- Select Category * --</option>
+                  {categories.map(c => (
+                    <option key={c.id} value={c.id} className="text-sm font-semibold text-white">{c.displayName}</option>
+                  ))}
+                </select>
               </div>
 
-              {/* (C) Subcategory Pill: "H PERFUME" */}
-              <div className="relative">
-                <button
-                  onClick={() => setIsEditingSubCategory(!isEditingSubCategory)}
-                  title="Click to choose or enter subcategory"
-                  className="w-full bg-[#5b3d99] hover:bg-[#6846ae] text-white font-bold text-xs py-2 px-3 rounded-lg text-center uppercase tracking-wide transition shadow"
+              {/* Subcategory Dropdown (NO DEFAULT SELECTION) */}
+              <div>
+                <select
+                  value={selectedSubCategoryId}
+                  disabled={!selectedCategoryId}
+                  onChange={(e) => handleSubCategoryChange(e.target.value)}
+                  className={`w-full bg-[#050b18] border text-sm sm:text-base font-semibold text-white rounded-xl py-2.5 px-3.5 focus:outline-none transition disabled:opacity-40 ${
+                    !selectedSubCategoryId && categoryValidationError ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-700 focus:border-purple-400'
+                  }`}
                 >
-                  {currentPhoto?.subCategoryName || 'H PERFUME'}
-                </button>
+                  <option value="" disabled className="text-sm font-medium text-slate-400">
+                    {selectedCategoryId ? '-- Select Subcategory * --' : '-- First Select Category --'}
+                  </option>
+                  {filteredSubCategories.map(s => (
+                    <option key={s.id} value={s.id} className="text-sm font-semibold text-white">{s.name}</option>
+                  ))}
+                </select>
+              </div>
 
-                {isEditingSubCategory && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#09152a] border border-slate-700 rounded-lg shadow-2xl p-2 z-50 text-xs space-y-2">
-                    <div className="max-h-32 overflow-y-auto space-y-1 custom-scrollbar">
-                      {subCategories
-                        .filter(s => s.categoryId === currentPhoto?.categoryId)
-                        .map(s => (
-                          <button
-                            key={s.id}
-                            onClick={() => {
-                              updateCurrentPhoto({
-                                subCategoryId: s.id,
-                                subCategoryName: s.name.toUpperCase()
-                              });
-                              setIsEditingSubCategory(false);
-                            }}
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-purple-900/40 text-slate-200 text-xs"
-                          >
-                            {s.name}
-                          </button>
-                        ))}
-                    </div>
-
-                    <div className="border-t border-slate-800 pt-2 flex items-center gap-1">
+              {/* Add New Subcategory Option */}
+              {selectedCategoryId && (
+                <div>
+                  {showNewSubCatInput ? (
+                    <div className="flex items-center gap-2 pt-1">
                       <input
                         type="text"
-                        placeholder="Or type new..."
+                        placeholder="New Subcategory name..."
                         value={customSubCategoryInput}
                         onChange={(e) => setCustomSubCategoryInput(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 px-2 py-1 rounded text-xs text-white"
+                        onKeyDown={(e) => e.key === 'Enter' && handleCreateNewSubCategory()}
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-semibold text-white"
+                        autoFocus
                       />
                       <button
-                        onClick={() => {
-                          if (customSubCategoryInput.trim()) {
-                            updateCurrentPhoto({
-                              subCategoryName: customSubCategoryInput.trim().toUpperCase()
-                            });
-                            setCustomSubCategoryInput('');
-                            setIsEditingSubCategory(false);
-                          }
-                        }}
-                        className="px-2 py-1 bg-amber-500 text-black font-bold rounded text-xs"
+                        onClick={handleCreateNewSubCategory}
+                        className="px-4 py-2 bg-amber-500 text-black font-bold text-xs rounded-xl"
                       >
-                        Set
+                        Add
+                      </button>
+                      <button
+                        onClick={() => setShowNewSubCatInput(false)}
+                        className="px-2 py-2 text-slate-400 hover:text-white text-xs"
+                      >
+                        <X size={16} />
                       </button>
                     </div>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <button
+                      onClick={() => setShowNewSubCatInput(true)}
+                      className="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 mt-1"
+                    >
+                      <FolderPlus size={14} />
+                      <span>+ Create New Subcategory</span>
+                    </button>
+                  )}
+                </div>
+              )}
 
-              {/* (D) Wishlist Pill: "Add to wishlist" */}
-              <button
-                onClick={() => updateCurrentPhoto({ isWishlist: !currentPhoto?.isWishlist })}
-                className={`w-full font-bold text-xs py-2 px-3 rounded-lg text-center transition shadow flex items-center justify-center gap-2 ${
-                  currentPhoto?.isWishlist
-                    ? 'bg-rose-600 text-white'
-                    : 'bg-[#5b3d99] hover:bg-[#6846ae] text-white'
-                }`}
-              >
-                <Heart size={14} className={currentPhoto?.isWishlist ? 'fill-white' : ''} />
-                <span>{currentPhoto?.isWishlist ? 'In wishlist' : 'Add to wishlist'}</span>
-              </button>
+              {/* Error warning badge */}
+              {categoryValidationError && (
+                <p className="text-xs text-red-400 font-bold leading-tight">
+                  {categoryValidationError}
+                </p>
+              )}
             </div>
 
-            {/* 4. ADD/REMOVE VARIANTS HEADER */}
-            <div className="pt-2 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-200">
-                Add/Remove Variants
-              </span>
-              <div className="flex items-center gap-1.5">
+            {/* 3. PRODUCT NAME / CODE PILL / CUSTOMIZABLE INPUT */}
+            <div className="space-y-2">
+              <label className="text-xs sm:text-sm font-bold text-slate-200 flex items-center justify-between">
+                <span>Product Code / Name</span>
+                <span className="text-[11px] font-bold text-amber-300 bg-amber-400/15 border border-amber-400/40 px-2 py-0.5 rounded-md tracking-wider uppercase">
+                  Click to edit
+                </span>
+              </label>
+
+              {isEditingCode ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={codeInputValue}
+                    onChange={(e) => setCodeInputValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveEditedCode();
+                      if (e.key === 'Escape') setIsEditingCode(false);
+                    }}
+                    className="flex-1 bg-[#5b3d99] text-white font-bold text-base py-2.5 px-3.5 rounded-xl border border-purple-300 focus:outline-none"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSaveEditedCode}
+                    className="p-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-white shadow-md"
+                    title="Save Name"
+                  >
+                    <Check size={18} />
+                  </button>
+                  <button
+                    onClick={() => setIsEditingCode(false)}
+                    className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300"
+                    title="Cancel"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setCodeInputValue(currentPhoto?.photoCode || '');
+                    setIsEditingCode(true);
+                  }}
+                  title="Click to customize product name"
+                  className="w-full bg-[#5b3d99] hover:bg-[#6846ae] text-white font-bold text-base sm:text-lg py-3 px-4 rounded-xl text-center transition shadow-md flex items-center justify-between group"
+                >
+                  <span className="flex-1 text-center truncate">{currentPhoto?.photoCode || 'PRODUCT NAME'}</span>
+                  <Edit2 size={16} className="text-purple-300 opacity-80 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                </button>
+              )}
+            </div>
+
+            {/* 4. DYNAMIC VARIANTS HEADER */}
+            <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+              <div>
+                <span className="text-sm sm:text-base font-bold tracking-wide uppercase text-white block">
+                  Product Variants
+                </span>
+                <span className="text-xs text-slate-300">
+                  Click label to edit (e.g. Black, 1kg, 100ml)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleRemoveLastVariant}
-                  title="Remove variant"
-                  className="w-6 h-6 rounded bg-[#ef4444] hover:bg-red-600 text-white flex items-center justify-center font-bold text-xs transition"
+                  title="Remove last variant"
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#ef4444] hover:bg-red-600 text-white flex items-center justify-center font-bold text-base transition active:scale-95 shadow-md"
                 >
-                  <X size={13} />
+                  <X size={18} />
                 </button>
                 <button
                   onClick={handleAddVariant}
-                  title="Add variant (C, D...)"
-                  className="w-6 h-6 rounded bg-[#16a34a] hover:bg-emerald-600 text-white flex items-center justify-center font-bold text-xs transition"
+                  title="Add variant"
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#16a34a] hover:bg-emerald-600 text-white flex items-center justify-center font-bold text-base transition active:scale-95 shadow-md"
                 >
-                  <Plus size={14} />
+                  <Plus size={20} />
                 </button>
               </div>
             </div>
 
-            {/* 5. VARIANT ROWS WITH GREEN BADGES */}
-            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-0.5 custom-scrollbar">
+            {/* 5. DYNAMIC VARIANT ROWS WITH ENLARGED BADGES & CONTROLS */}
+            <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
               {currentPhoto && currentPhoto.variants.length > 0 ? (
                 currentPhoto.variants.map((v, idx) => (
                   <div
-                    key={`${v.letter}-${idx}`}
-                    className="flex items-center justify-between bg-[#040816] border border-slate-800/80 px-2.5 py-1.5 rounded-lg text-xs gap-2"
+                    key={v.id || `${v.label}-${idx}`}
+                    className="flex items-center justify-between bg-[#040816] border border-slate-800/90 p-3 rounded-xl text-sm gap-3 shadow-sm"
                   >
-                    {/* Bright Green Square Indicator */}
-                    <div className="w-6 h-6 bg-[#00c950] rounded-sm flex-shrink-0" />
+                    {/* Enlarge Green Variant Badge Box (1, A, B, C, D) */}
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 bg-[#00c950] rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg font-bold text-black shadow-md">
+                      {idx + 1}
+                    </div>
 
-                    {/* Variant Label Input / Display (User can type 1, 1KG, A, 500ML, etc.) */}
+                    {/* Editable Variant Label Box */}
                     {editingVariantIndex === idx ? (
-                      <div className="flex items-center gap-1 flex-1">
+                      <div className="flex items-center gap-2 flex-1">
                         <input
                           type="text"
-                          value={v.letter}
-                          onChange={(e) => handleUpdateVariantLetter(idx, e.target.value.toUpperCase())}
+                          value={v.label || v.letter}
+                          onChange={(e) => handleUpdateVariantLabel(idx, e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') setEditingVariantIndex(null);
                           }}
-                          className="w-full bg-[#1e1338] border border-amber-400/80 rounded px-1.5 py-0.5 text-xs font-bold text-amber-300 focus:outline-none"
+                          className="w-full bg-[#1e1338] border border-amber-400 rounded-xl px-3 py-1.5 text-base font-bold text-amber-300 focus:outline-none"
                           autoFocus
                         />
                         <button
                           onClick={() => setEditingVariantIndex(null)}
-                          className="p-1 bg-emerald-600 rounded text-white hover:bg-emerald-500"
+                          className="p-2 bg-emerald-600 rounded-xl text-white hover:bg-emerald-500 shadow"
                           title="Done"
                         >
-                          <Check size={12} />
+                          <Check size={16} />
                         </button>
                       </div>
                     ) : (
                       <button
                         onClick={() => setEditingVariantIndex(idx)}
-                        title="Click to rename variant (e.g., 1, 1KG, 500gm, A)"
-                        className="group flex items-center gap-1.5 flex-1 text-left px-1 py-0.5 rounded hover:bg-slate-800/60 transition"
+                        title="Click to rename variant"
+                        className="group flex items-center gap-2 flex-1 text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-800/80 transition truncate border border-transparent hover:border-slate-700"
                       >
-                        <span className="font-extrabold text-white text-sm tracking-wide">
-                          {v.letter}
+                        <span className="font-bold text-white text-base tracking-wide">
+                          {v.label || v.letter}
                         </span>
-                        <Edit2 size={11} className="text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <Edit2 size={14} className="text-slate-400 opacity-70 group-hover:opacity-100 transition-opacity" />
                       </button>
                     )}
 
-                    {/* Minus / Delete Button */}
-                    <button
-                      onClick={() => handleRemoveVariantByLetter(v.letter)}
-                      title="Delete variant"
-                      className="text-red-400 hover:text-red-300 font-bold px-1.5 text-sm"
-                    >
-                      –
-                    </button>
+                    {/* Enlarged Min Qty Stepper Box */}
+                    <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border transition ${
+                      (v.minQuantity === 0 || v.quantity === 0)
+                        ? 'bg-red-950/40 border-red-500/80'
+                        : 'bg-[#0b1429] border-slate-700/90 shadow-inner'
+                    }`}>
+                      <span className="text-xs sm:text-sm font-bold text-slate-300">Min:</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={v.minQuantity ?? v.quantity ?? 1}
+                        onChange={(e) => handleUpdateVariantQuantity(idx, parseInt(e.target.value, 10))}
+                        className={`w-14 bg-transparent text-center font-mono font-bold text-base focus:outline-none ${
+                          (v.minQuantity === 0 || v.quantity === 0) ? 'text-red-400' : 'text-white'
+                        }`}
+                      />
+                      {(v.minQuantity === 0 || v.quantity === 0) && (
+                        <span className="text-[10px] font-black uppercase text-red-400 bg-red-500/20 px-1.5 py-0.5 rounded">
+                          Out
+                        </span>
+                      )}
+                    </div>
 
-                    {/* Quantity / Count: "1" */}
-                    <span className="font-mono font-bold text-white text-xs">
-                      {v.quantity}
-                    </span>
+                    {/* Delete Variant Button */}
+                    <button
+                      onClick={() => handleRemoveVariantByIndex(idx)}
+                      title="Delete variant"
+                      className="w-9 h-9 rounded-xl bg-red-950/50 hover:bg-red-900 text-red-400 hover:text-red-200 flex items-center justify-center font-bold transition active:scale-95 flex-shrink-0"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
                 ))
               ) : (
-                <div className="text-center py-4 text-xs text-slate-500 italic">
+                <div className="text-center py-6 text-sm text-slate-400 italic">
                   Upload a photo to configure variants
                 </div>
               )}
             </div>
           </div>
 
-          {/* 6. BOTTOM CREATE BUTTON (Exact Screenshot: "→ Create All Products") */}
-          <div className="pt-3">
+          {/* 6. BOTTOM ACTION BUTTONS: Save & Delete */}
+          <div className="space-y-3 pt-4 border-t border-slate-800">
             <button
               onClick={handleCreateAllProducts}
               disabled={stagedPhotos.length === 0}
-              className="w-full py-2.5 bg-[#00c853] hover:bg-[#00b047] disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-black text-xs sm:text-sm rounded-lg flex items-center justify-center gap-2 shadow-lg transition active:scale-98"
+              className="w-full py-3.5 bg-[#00c853] hover:bg-[#00b047] disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-black text-base rounded-xl flex items-center justify-center gap-2 shadow-xl transition active:scale-98 tracking-wide"
             >
-              <span>→ Create All Products</span>
+              <span>→ Save All Products ({stagedPhotos.length})</span>
             </button>
+
+            {initialPhoto && (
+              <button
+                type="button"
+                onClick={handleDeleteExistingProduct}
+                className="w-full py-3 bg-red-950/80 hover:bg-red-900 border border-red-600 text-red-200 font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition shadow-md"
+              >
+                <Trash2 size={16} />
+                <span>Delete Product</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* =================================================================== */}
+      {/* DUPLICATE CODE DETECTION & COMPARISON POPUP                         */}
+      {/* =================================================================== */}
+      {duplicateModal && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-[#091228] border-2 border-amber-500/80 rounded-2xl p-5 shadow-2xl space-y-4 animate-in zoom-in-95">
+            
+            {/* Warning Header */}
+            <div className="flex items-start gap-3 border-b border-slate-800 pb-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-black text-white">
+                  Duplicate Product Detected!
+                </h3>
+                <p className="text-xs text-amber-300 font-medium">
+                  Product name <span className="font-bold bg-amber-400/20 px-1.5 py-0.5 rounded text-amber-300">[{duplicateModal.attemptedCode}]</span> already exists in Showroom!
+                </p>
+              </div>
+              <button
+                onClick={() => setDuplicateModal(null)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Side-by-Side Image Comparison */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Existing Product in Database */}
+              <div className="bg-[#040816] p-2.5 rounded-xl border border-slate-700/80 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-amber-400">Existing in Showroom</span>
+                  <span className="text-[10px] font-mono text-slate-400">ID: {duplicateModal.existingProduct.id}</span>
+                </div>
+                <div className="w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-800">
+                  <img
+                    src={duplicateModal.existingProduct.imageUri}
+                    alt={duplicateModal.existingProduct.photoCode}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="text-[11px] text-slate-300 space-y-0.5">
+                  <p><strong>Name:</strong> {duplicateModal.existingProduct.photoCode}</p>
+                  <p><strong>Category:</strong> {duplicateModal.existingProduct.subCategoryName}</p>
+                  <p><strong>Variants:</strong> {duplicateModal.existingProduct.itemCount} Items ({duplicateModal.existingProduct.customLabels?.join(', ') || 'A, B'})</p>
+                </div>
+              </div>
+
+              {/* Newly Uploaded Staged Photo */}
+              <div className="bg-[#040816] p-2.5 rounded-xl border border-purple-500/50 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-purple-400">New Upload Staged</span>
+                  <span className="text-[10px] text-purple-300 font-semibold">New Image</span>
+                </div>
+                <div className="w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-800">
+                  <img
+                    src={duplicateModal.newImageUri}
+                    alt={duplicateModal.attemptedCode}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="text-[11px] text-slate-300 space-y-0.5">
+                  <p><strong>Proposed Name:</strong> {duplicateModal.attemptedCode}</p>
+                  <p className="text-slate-400">What would you like to do?</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Change Code Input & Suggestions */}
+            <div className="bg-[#0e1c3a] p-3 rounded-xl border border-slate-700 space-y-2">
+              <label className="block text-xs font-bold text-slate-200">
+                Option A: Change to a Unique Name (Recommended)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={customNewCodeInput}
+                  onChange={(e) => setCustomNewCodeInput(e.target.value)}
+                  placeholder="Enter unique name..."
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-amber-300 font-bold"
+                />
+                <button
+                  onClick={() => handleDuplicateChangeCode(customNewCodeInput)}
+                  className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-lg transition"
+                >
+                  Use New Name
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5 pt-1">
+                <span className="text-[10px] text-slate-400">Suggestions:</span>
+                <button
+                  onClick={() => setCustomNewCodeInput(`${duplicateModal.attemptedCode}-A`)}
+                  className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] rounded"
+                >
+                  {duplicateModal.attemptedCode}-A
+                </button>
+                <button
+                  onClick={() => setCustomNewCodeInput(`${duplicateModal.attemptedCode}_1`)}
+                  className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] rounded"
+                >
+                  {duplicateModal.attemptedCode}_1
+                </button>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setDuplicateModal(null)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg"
+              >
+                Cancel / Skip
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDuplicateEditExisting}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs rounded-xl transition shadow flex items-center gap-1.5"
+                >
+                  <Edit2 size={13} />
+                  <span>Edit Existing Product</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* 5. SUCCESS ANIMATION OVERLAY MODAL: Animated Thumbs Up ONLY         */}
+      {/* =================================================================== */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 pointer-events-none animate-in fade-in duration-200">
+          <div className="relative flex items-center justify-center animate-in zoom-in-95 duration-200">
+            {/* Pulse Glow Ring */}
+            <div className="absolute -inset-6 rounded-full bg-emerald-500/30 animate-ping" />
+            {/* Main Animated Thumbs Up Circle */}
+            <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full bg-gradient-to-tr from-emerald-600 via-emerald-500 to-emerald-400 flex items-center justify-center text-white shadow-[0_0_60px_rgba(16,185,129,0.7)] animate-bounce border-4 border-emerald-300/80">
+              <ThumbsUp size={64} className="stroke-[2.5]" />
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

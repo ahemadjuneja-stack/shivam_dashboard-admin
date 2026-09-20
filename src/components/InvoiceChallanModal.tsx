@@ -23,7 +23,7 @@ export function InvoiceChallanModal({ order, onClose }: InvoiceChallanModalProps
       `*Total Pieces:* ${order.totalItemsCount} pcs\n` +
       `*Status:* ${order.overallStatus.replace(/_/g, ' ')}\n\n` +
       `*Items Summary:*\n` +
-      order.items.map(i => `• ${i.photoCode} (Opt ${i.optionLetter}): ${i.quantity} pcs [${i.subCategoryName}]`).join('\n') +
+      (order.items || []).map(i => `• ${i.photoCode} (Opt ${i.optionLetter}): ${i.quantity} pcs [${i.subCategoryName}]`).join('\n') +
       `\n\nThank you for your business with SHIVAM B2B!`
     );
     window.open(`https://wa.me/91${order.mobileNumber.replace(/\D/g, '')}?text=${text}`, '_blank');
@@ -144,12 +144,24 @@ export function InvoiceChallanModal({ order, onClose }: InvoiceChallanModalProps
                 </div>
                 <div className="flex justify-between">
                   <span>Total Order Lines:</span>
-                  <span className="font-bold">{order.items.length} lines</span>
+                  <span className="font-bold">{order.itemCount ?? order.items?.length ?? 0} lines</span>
                 </div>
                 <div className="flex justify-between text-slate-900 font-bold border-t border-slate-200 pt-1">
                   <span>Total Pieces:</span>
-                  <span className="font-mono text-sm">{order.totalItemsCount} pcs</span>
+                  <span className="font-mono text-sm">{order.totalQuantity ?? (order.items||[]).reduce((s,i)=>s+(Number(i.quantity)||0),0)} pcs</span>
                 </div>
+                {order.notes && order.notes !== 'No Note' && (
+                  <div className="flex justify-between pt-1 border-t border-slate-100">
+                    <span className="text-slate-500">Note:</span>
+                    <span className="font-medium italic text-slate-800">{order.notes}</span>
+                  </div>
+                )}
+                {order.voiceNoteUrl && (
+                  <div className="flex justify-between text-emerald-700 font-bold text-[11px]">
+                    <span>Voice Note:</span>
+                    <span>Attached</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -169,12 +181,12 @@ export function InvoiceChallanModal({ order, onClose }: InvoiceChallanModalProps
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {order.items.map((item, idx) => (
+                {(order.items || []).map((item, idx) => (
                   <tr key={idx} className="hover:bg-slate-50">
                     <td className="py-2.5 px-3 font-mono text-slate-500">{idx + 1}</td>
                     <td className="py-2.5 px-3">
                       <img 
-                        src={item.imageUri} 
+                        src={item.imageUri || item.imageUrl || item.image} 
                         alt={item.photoCode} 
                         className="w-12 h-8 rounded object-cover border border-slate-300 bg-black"
                       />

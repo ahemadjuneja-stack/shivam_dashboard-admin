@@ -32,3 +32,32 @@ body {
   background: rgba(245, 158, 11, 0.8);
 }
 
+
+@layer utilities {
+  .standard-catalog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    align-items: stretch;
+  }
+  .standard-catalog-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 12px;
+  }
+  .standard-thumbnail-container {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 8px 8px 0 0;
+    background-color: #000;
+  }
+  .standard-thumbnail-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+}

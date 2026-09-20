@@ -1,3 +1,4 @@
+import { useVideoSrc } from '../hooks/useVideoSrc';
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store';
 import { 
@@ -31,10 +32,25 @@ export function Home() {
   const [screenMode, setScreenMode] = useState<'home' | 'subcategories' | 'gallery' | 'fullimage'>('home');
   const [selectedPhoto, setSelectedPhoto] = useState<CatalogPhoto | null>(null);
 
-  // Filtered lists
-  const currentCategory = categories.find(c => c.id === activeCategoryId) || categories[0];
-  const categorySubList = subCategories.filter(s => s.categoryId === activeCategoryId);
-  const galleryPhotos = photos.filter(p => p.subCategoryId === activeSubCategoryId);
+  // Dynamic filter for User App (APK):
+  // 1. Subcategory is active ONLY if it contains at least 1 active product
+  const isSubCategoryActive = (subId: string) => {
+    return photos.some(p => p.subCategoryId === subId && !p.isHidden);
+  };
+
+  // 2. Category is active ONLY if it contains subcategories with active products (or direct products)
+  const isCategoryActive = (catId: string) => {
+    const catSubs = subCategories.filter(s => s.categoryId === catId);
+    return catSubs.some(s => isSubCategoryActive(s.id)) || photos.some(p => p.categoryId === catId && !p.isHidden);
+  };
+
+  const activeCategories = categories.filter(c => isCategoryActive(c.id));
+  const activeSubCategories = subCategories.filter(s => isSubCategoryActive(s.id));
+
+  // Filtered lists for current active selection
+  const currentCategory = activeCategories.find(c => c.id === activeCategoryId) || activeCategories[0] || categories[0];
+  const categorySubList = activeSubCategories.filter(s => s.categoryId === (currentCategory?.id || activeCategoryId));
+  const galleryPhotos = photos.filter(p => p.subCategoryId === activeSubCategoryId && !p.isHidden);
   const activePhotoIndex = selectedPhoto ? galleryPhotos.findIndex(p => p.id === selectedPhoto.id) : 0;
   const totalCartPieces = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -107,6 +123,7 @@ export function Home() {
   }, [videoList.length]);
 
   const activeVideoPhoto = videoList[videoSlideIdx] || videoList[0];
+  const activeVideoSrc = useVideoSrc(activeVideoPhoto?.videoUri);
 
   // 1. Select category from Home -> opens subcategory view
   const handleSelectCategory = (catId: string) => {
@@ -204,8 +221,8 @@ export function Home() {
               <>
                 <video
                   ref={videoRef}
-                  key={activeVideoPhoto.videoUri}
-                  src={activeVideoPhoto.videoUri || undefined}
+                  key={activeVideoSrc || activeVideoPhoto.videoUri}
+                  src={activeVideoSrc || undefined}
                   autoPlay
                   loop
                   muted={isVideoMuted}
@@ -245,6 +262,32 @@ export function Home() {
                   {isVideoMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
                 </button>
 
+                {/* Order Button (if quantity is set) */}
+                {activeVideoPhoto?.orderQuantity && (
+                  <div className="absolute top-4 right-4 z-20">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        useAppStore.getState().addToCart({
+                          id: 'hdtv-' + Date.now(),
+                          categoryId: activeVideoPhoto.categoryId || 'GENERAL',
+                          
+                          subCategoryName: 'Showroom Video',
+                          photoId: activeVideoPhoto.id,
+                          photoCode: 'HDTV: ' + (activeVideoPhoto.title || 'Video'),
+                          imageUri: activeVideoPhoto.thumbnailUri || 'https://images.unsplash.com/photo-1572911425175-6815f9175440?q=80&w=200&auto=format&fit=crop',
+                          optionLetter: 'A',
+                          quantity: parseInt(activeVideoPhoto.orderQuantity || '1') || 1
+                        });
+                        alert('Added to cart: ' + activeVideoPhoto.orderQuantity + ' pieces');
+                      }}
+                      className="bg-brand-gold hover:bg-yellow-400 text-black font-black px-4 py-2 rounded-lg shadow-[0_4px_12px_rgba(255,215,0,0.4)] flex items-center gap-2 transform transition hover:scale-105 active:scale-95 border-2 border-white/20"
+                    >
+                      <span className="uppercase text-sm">Order {activeVideoPhoto.orderQuantity} Pcs</span>
+                    </button>
+                  </div>
+                )}
+                
                 {/* Slide Dots */}
                 {videoList.length > 1 && (
                   <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/15 flex items-center gap-1.5 z-10">
@@ -266,35 +309,41 @@ export function Home() {
 
         {/* RIGHT: CATEGORY THUMBNAILS SIDEBAR (BALANCED SIZE, SMOOTH SCROLL) */}
         <div className="w-[35%] h-full rounded-2xl bg-slate-900/90 border border-slate-800 p-2.5 shadow-2xl flex flex-col gap-2.5 overflow-y-auto scroll-smooth select-none">
-          {categories.map(cat => {
-            return (
-              <button
-                key={cat.id}
-                onClick={() => handleSelectCategory(cat.id)}
-                className="group w-full flex-shrink-0 flex flex-col gap-1.5 p-1.5 rounded-xl bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 hover:border-brand-gold/80 transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] text-center focus:outline-none shadow-md"
-              >
-                {/* 1. Strict 16:9 Category Thumbnail Image (Natural balanced ratio, neither too small nor oversized) */}
-                <div className="w-full aspect-video rounded-lg overflow-hidden bg-black border border-slate-700/60 group-hover:border-brand-gold transition-colors shadow-inner flex items-center justify-center">
-                  <img
-                    src={cat.thumbnailUrl}
-                    alt={cat.displayName}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                </div>
+          {activeCategories.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center p-4 text-center text-slate-500 text-xs">
+              No categories with active products found.
+            </div>
+          ) : (
+            activeCategories.map(cat => {
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => handleSelectCategory(cat.id)}
+                  className="group w-full flex-shrink-0 flex flex-col gap-1.5 p-1.5 rounded-xl bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 hover:border-brand-gold/80 transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] text-center focus:outline-none shadow-md"
+                >
+                  {/* 1. Strict 16:9 Category Thumbnail Image (Natural balanced ratio, neither too small nor oversized) */}
+                  <div className="w-full aspect-video rounded-lg overflow-hidden bg-black border border-slate-700/60 group-hover:border-brand-gold transition-colors shadow-inner flex items-center justify-center">
+                    <img
+                      src={cat.thumbnailUrl}
+                      alt={cat.displayName}
+                      className="standard-thumbnail-img group-hover:scale-105 transition-transform duration-300"
+                    />
+                  </div>
 
-                {/* 2. Category Name BELOW the Thumbnail (No folder count!) */}
-                <div className="flex items-center justify-center gap-1.5 py-0.5 px-1 flex-shrink-0">
-                  <span 
-                    className="w-2 h-2 rounded-full shadow flex-shrink-0" 
-                    style={{ backgroundColor: cat.accentColorHex }} 
-                  />
-                  <span className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-brand-gold tracking-wide truncate">
-                    {cat.displayName}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+                  {/* 2. Category Name BELOW the Thumbnail (No folder count!) */}
+                  <div className="flex items-center justify-center gap-1.5 py-0.5 px-1 flex-shrink-0">
+                    <span 
+                      className="w-2 h-2 rounded-full shadow flex-shrink-0" 
+                      style={{ backgroundColor: cat.accentColorHex }} 
+                    />
+                    <span className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-brand-gold tracking-wide truncate">
+                      {cat.displayName}
+                    </span>
+                  </div>
+                </button>
+              );
+            })
+          )}
         </div>
 
       </div>
@@ -337,29 +386,35 @@ export function Home() {
 
         {/* Subcategories Grid: Sirf Thumbnail aur uske Niche Subcategory ka Naam */}
         <div className="flex-1 p-4 overflow-y-auto scrollbar-thin">
-          <div className="grid grid-cols-3 gap-4 max-w-5xl mx-auto">
-            {categorySubList.map((sub) => (
-              <button
-                key={sub.id}
-                onClick={() => handleSelectSubCategory(sub.id)}
-                className="group flex flex-col gap-2 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-center focus:outline-none"
-              >
-                {/* 1. Strict 16:9 Thumbnail Image (Pure image, no text/folder icons over it) */}
-                <div className="w-full aspect-video rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-800 group-hover:border-brand-gold transition-colors shadow-lg">
-                  <img
-                    src={sub.thumbnailUrl}
-                    alt={sub.name}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                </div>
+          {categorySubList.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-8 text-slate-500 text-sm">
+              <span>No subcategories with active products found in this category.</span>
+            </div>
+          ) : (
+            <div className="standard-catalog-grid max-w-5xl mx-auto">
+              {categorySubList.map((sub) => (
+                <button
+                  key={sub.id}
+                  onClick={() => handleSelectSubCategory(sub.id)}
+                  className="group flex flex-col gap-2 transition-all duration-200 hover:scale-[1.02] active:scale-95 text-center focus:outline-none"
+                >
+                  {/* 1. Strict 16:9 Thumbnail Image (Pure image, no text/folder icons over it) */}
+                  <div className="standard-thumbnail-container border-2 border-slate-800 group-hover:border-brand-gold transition-colors shadow-lg">
+                    <img
+                      src={sub.thumbnailUrl}
+                      alt={sub.name}
+                      className="standard-thumbnail-img group-hover:scale-105 transition-transform duration-300"
+                    />
+                  </div>
 
-                {/* 2. Uske Niche Subcategory ka Naam */}
-                <span className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-brand-gold tracking-wide truncate px-1">
-                  {sub.name}
-                </span>
-              </button>
-            ))}
-          </div>
+                  {/* 2. Uske Niche Subcategory ka Naam */}
+                  <span className="text-xs sm:text-sm font-bold text-slate-200 group-hover:text-brand-gold tracking-wide truncate px-1">
+                    {sub.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
       </div>
@@ -410,7 +465,7 @@ export function Home() {
                   <img
                     src={photo.imageUri}
                     alt={photo.photoCode}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    className="standard-thumbnail-img group-hover:scale-105 transition-transform duration-300"
                   />
 
                   {/* Ordered Badge if already in cart */}

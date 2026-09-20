@@ -7,7 +7,7 @@ export function SubCategoryGallery() {
   const { id } = useParams<{ id: string }>();
   const subCategory = useAppStore(state => state.subCategories.find(s => s.id === id));
   const category = useAppStore(state => state.categories.find(c => c.id === subCategory?.categoryId));
-  const photos = useAppStore(state => state.photos.filter(p => p.subCategoryId === id));
+  const photos = useAppStore(state => state.photos.filter(p => p.subCategoryId === id && !p.isHidden));
   const addToCart = useAppStore(state => state.addToCart);
   
   const [quantities, setQuantities] = useState<Record<string, number>>({});

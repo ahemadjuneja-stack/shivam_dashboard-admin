@@ -14,7 +14,7 @@ export function ShowroomPreviewTab() {
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0);
 
   const filteredSubs = subCategories.filter(s => s.categoryId === selectedCatId);
-  const filteredPhotos = photos.filter(p => p.subCategoryId === selectedSubId);
+  const filteredPhotos = photos.filter(p => p.subCategoryId === selectedSubId && !p.isHidden);
   const activePhoto = filteredPhotos[selectedPhotoIndex] || filteredPhotos[0];
 
   return (
@@ -99,7 +99,7 @@ export function ShowroomPreviewTab() {
                 >
                   <span className="truncate">{sub.name}</span>
                   <span className="text-[10px] font-mono opacity-80">
-                    {photos.filter(p => p.subCategoryId === sub.id).length}
+                    {photos.filter(p => p.subCategoryId === sub.id && !p.isHidden).length}
                   </span>
                 </button>
               ))}

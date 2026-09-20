@@ -11,17 +11,31 @@ import {
   X, 
   Trash2, 
   Send, 
-  CheckCircle2,
-  Phone,
-  MapPin,
-  Minus,
-  Plus
+  CheckCircle2, 
+  Phone, 
+  MapPin, 
+  Minus, 
+  Plus,
+  MessageSquare,
+  Clock
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { initFirebaseSync, cleanupFirebaseSync } from './services/firebaseSync';
+import { CustomerChatModal } from './components/CustomerChatModal';
+import { OrderVoiceRecorder } from './components/OrderVoiceRecorder';
+import { Orders } from './pages/Orders';
+import { MobileOrderLineView } from './pages/MobileOrderLineView';
 
 function AppShell({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    initFirebaseSync();
+    return () => {
+      cleanupFirebaseSync();
+    };
+  }, []);
+
   const location = useLocation();
-  const isAdminRoute = location.pathname === '/' || location.pathname.startsWith('/admin');
+  const isAdminRoute = location.pathname === '/' || location.pathname.startsWith('/admin') || location.pathname === '/orders' || location.pathname === '/mobile-orders';
 
   const cart = useAppStore(state => state.cart);
   const removeFromCart = useAppStore(state => state.removeFromCart);
@@ -40,6 +54,24 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const [showLogin, setShowLogin] = useState(false);
   const [loginId, setLoginId] = useState('');
   const [orderSuccessMsg, setOrderSuccessMsg] = useState<string | null>(null);
+  const [showCustomerChat, setShowCustomerChat] = useState(false);
+  const [orderNotes, setOrderNotes] = useState('');
+  const [orderVoiceUrl, setOrderVoiceUrl] = useState<string | undefined>(undefined);
+
+  // Real-time Customer Session Invalidation: Immediately log out if customer document is deleted from Firestore/Store
+  useEffect(() => {
+    if (currentCustomer) {
+      const exists = customers.some(c => c.customerCode.toLowerCase() === currentCustomer.customerCode.toLowerCase());
+      if (!exists) {
+        setCurrentCustomer(null);
+      }
+    }
+  }, [customers, currentCustomer, setCurrentCustomer]);
+
+  const chatMessages = useAppStore(state => state.chatMessages);
+  const unreadAdminReplies = currentCustomer 
+    ? chatMessages.filter(m => m.customerCode === currentCustomer.customerCode && m.sender === 'ADMIN' && !m.isRead).length 
+    : 0;
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,8 +90,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
       setShowLogin(true);
       return;
     }
-    placeOrder();
+    placeOrder({ notes: orderNotes, voiceNoteUrl: orderVoiceUrl });
     setOrderSuccessMsg(`Wholesale order dispatched successfully for ${currentCustomer.shopName}!`);
+    setOrderNotes('');
+    setOrderVoiceUrl(undefined);
     setTimeout(() => {
       setOrderSuccessMsg(null);
     }, 4000);
@@ -138,6 +172,37 @@ function AppShell({ children }: { children: React.ReactNode }) {
                   <span className="font-bold text-white">Login</span>
                 )}
               </button>
+
+              {/* Chat / Communication with Admin HQ */}
+              <button 
+                onClick={() => {
+                  if (!currentCustomer) {
+                    setShowLogin(true);
+                  } else {
+                    setShowCustomerChat(true);
+                  }
+                }}
+                className="relative flex items-center gap-1 bg-slate-900 border border-emerald-500/40 hover:border-emerald-400 text-emerald-400 hover:text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition shadow-sm"
+                title="Chat & Voice note with Shivam Admin"
+              >
+                <MessageSquare size={13} />
+                <span>Chat</span>
+                {unreadAdminReplies > 0 && (
+                  <span className="w-3.5 h-3.5 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center animate-pulse">
+                    {unreadAdminReplies}
+                  </span>
+                )}
+              </button>
+
+              {/* Order Line Timeline (APK Live Orders) */}
+              <Link 
+                to="/mobile-orders"
+                className="flex items-center gap-1 bg-slate-900 border border-amber-500/40 hover:border-amber-400 text-amber-400 hover:text-white px-2 py-1 rounded-lg text-[11px] font-bold transition shadow-sm"
+                title="Live Order Line Timeline"
+              >
+                <Clock size={13} />
+                <span className="hidden sm:inline">Order Line</span>
+              </Link>
 
               {/* Top Order Slip / Cart Button */}
               <button 
@@ -316,6 +381,14 @@ function AppShell({ children }: { children: React.ReactNode }) {
                   <span className="font-mono text-brand-gold text-base">{totalPieces} pcs</span>
                 </div>
 
+                {/* Voice Note & Packing Instructions for Order */}
+                <OrderVoiceRecorder
+                  voiceNoteUrl={orderVoiceUrl}
+                  notes={orderNotes}
+                  onVoiceChange={setOrderVoiceUrl}
+                  onNotesChange={setOrderNotes}
+                />
+
                 <div className="flex items-center gap-2">
                   <button
                     onClick={clearCart}
@@ -433,6 +506,11 @@ function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
+      {/* Customer Chat / Communication Modal with Admin */}
+      {showCustomerChat && (
+        <CustomerChatModal onClose={() => setShowCustomerChat(false)} />
+      )}
+
     </div>
   );
 }
@@ -444,6 +522,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<AdminDashboard />} />
           <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/mobile-orders" element={<MobileOrderLineView />} />
           <Route path="/app" element={<Home />} />
           <Route path="/showroom" element={<Home />} />
           <Route path="/category/:id" element={<CategoryGallery />} />

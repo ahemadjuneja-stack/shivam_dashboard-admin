@@ -51,16 +51,34 @@ export function EditProductModal({
       .map(s => s.trim())
       .filter(Boolean);
 
+    const generatedVariants = parsedLabels.map((lbl, idx) => {
+      const minQ = typeof photo.variants?.[idx]?.minQuantity === 'number' 
+        ? photo.variants[idx].minQuantity 
+        : (typeof photo.variants?.[idx]?.quantity === 'number' ? photo.variants[idx].quantity : defaultQuantity || 1);
+      const isAvail = minQ > 0;
+      return {
+        id: photo.variants?.[idx]?.id || `v-${idx + 1}`,
+        label: lbl,
+        minQuantity: minQ,
+        quantity: minQ,
+        isAvailable: isAvail,
+        inStock: isAvail
+      };
+    });
+
     onSave(photo.id, {
-      photoCode: photoCode.toUpperCase().trim(),
+      photoCode: photoCode.trim(),
+      title: photoCode.trim(),
+      name: photoCode.trim(),
       categoryId: categoryId as any,
       subCategoryId,
       subCategoryName: sub ? sub.name : photo.subCategoryName,
       imageUri: imageUri.trim(),
       videoUri: videoUri.trim() ? videoUri.trim() : undefined,
       defaultQuantity: Number(defaultQuantity),
-      itemCount: Number(itemCount),
+      itemCount: parsedLabels.length > 0 ? parsedLabels.length : Number(itemCount),
       customLabels: parsedLabels.length > 0 ? parsedLabels : undefined,
+      variants: generatedVariants.length > 0 ? generatedVariants : photo.variants,
       description: description.trim()
     });
     onClose();
@@ -127,13 +145,13 @@ export function EditProductModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-400 mb-1">Photo Code *</label>
+              <label className="block text-xs font-bold text-slate-400 mb-1">Photo Code / Name *</label>
               <input
                 type="text"
                 required
                 value={photoCode}
                 onChange={e => setPhotoCode(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white font-mono uppercase"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white font-mono"
               />
             </div>
 

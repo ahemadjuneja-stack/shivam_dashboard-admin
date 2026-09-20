@@ -1,6 +1,25 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { MainCategory, CategoryItem, SubCategory, CatalogPhoto, Customer, OrderCartItem, WholesaleOrder, ShowroomVideo } from '../types';
+import { MainCategory, CategoryItem, SubCategory, CatalogPhoto, Customer, OrderCartItem, WholesaleOrder, ShowroomVideo, CommunityPost } from '../types';
+import { 
+  syncOrderToFirebase, 
+  deleteOrderFromFirebase, 
+  syncCategoryToFirebase, 
+  deleteCategoryFromFirebase, 
+  syncSubCategoryToFirebase, 
+  deleteSubCategoryFromFirebase,
+  syncChatMessageToFirebase,
+  markMessagesAsReadInFirebase,
+  syncCommunityPostToFirebase,
+  deleteCommunityPostFromFirebase,
+  syncCustomerToFirebase,
+  deleteCustomerFromFirebase,
+  syncPhotoToFirebase,
+  toggleProductHideInFirebase,
+  deletePhotoFromFirebase,
+  syncShowroomVideoToFirebase,
+  deleteShowroomVideoFromFirebase
+} from '../services/firebaseSync';
 
 interface AppState {
   // Catalog Data
@@ -10,6 +29,7 @@ interface AppState {
   showroomVideos: ShowroomVideo[];
   customers: Customer[];
   orders: WholesaleOrder[];
+  communityPosts: CommunityPost[];
   
   // Navigation & Selection in Landscape Mode
   activeCategoryId: string;
@@ -26,6 +46,24 @@ interface AppState {
   chatMessages: import('../types').ChatMessage[];
   sendMessage: (msg: import('../types').ChatMessage) => void;
   markMessagesAsRead: (customerCode: string) => void;
+  setChatMessages: (messages: import('../types').ChatMessage[]) => void;
+
+  // Community Posts State
+  setCommunityPosts: (posts: CommunityPost[]) => void;
+  addCommunityPost: (post: CommunityPost) => void;
+  deleteCommunityPost: (postId: string) => void;
+
+  // Firebase Real-time State
+  firebaseConnected: boolean;
+  firebaseSyncing: boolean;
+  setFirebaseConnected: (status: boolean) => void;
+  setFirebaseSyncing: (syncing: boolean) => void;
+  setOrders: (orders: WholesaleOrder[]) => void;
+  setCategories: (categories: CategoryItem[]) => void;
+  setSubCategories: (subCategories: SubCategory[]) => void;
+  setPhotos: (photos: CatalogPhoto[]) => void;
+  setShowroomVideos: (videos: ShowroomVideo[]) => void;
+  setCustomers: (customers: Customer[]) => void;
 
   // Actions
   setShowroomScreenMode: (mode: 'home' | 'subcategories' | 'gallery' | 'fullimage') => void;
@@ -40,7 +78,7 @@ interface AppState {
   removeFromCart: (index: number) => void;
   clearCart: () => void;
   setCurrentCustomer: (customer: Customer | null) => void;
-  placeOrder: () => void;
+  placeOrder: (options?: { notes?: string; voiceNoteUrl?: string }) => void;
   
   // Admin Actions
   addCustomer: (customer: Customer) => void;
@@ -68,6 +106,7 @@ interface AppState {
   addShowroomVideo: (video: ShowroomVideo) => void;
   addMultipleShowroomVideos: (videos: ShowroomVideo[]) => void;
   deleteShowroomVideo: (videoId: string) => void;
+  updateShowroomVideo: (videoId: string, updates: Partial<ShowroomVideo>) => void;
   reorderShowroomVideos: (videos: ShowroomVideo[]) => void;
   resetToDefaults: () => void;
 }
@@ -384,394 +423,7 @@ const defaultPhotos: CatalogPhoto[] = [
   }
 ];
 
-const defaultOrders: WholesaleOrder[] = [
-  {
-    id: 'ord-201',
-    orderNumber: 'ORD-5501',
-    customerCode: 'CUST-RAMIZ-1',
-    shopName: 'sajde keshod',
-    cityName: 'Keshod',
-    mobileNumber: '9898011223',
-    source: 'SALESMAN',
-    salesmanName: 'RAMIZ',
-    dateFormatted: '16-09-2026',
-    notes: 'sajde keshod',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [
-      {
-        photoId: 'p-er-101',
-        photoCode: 'ER-101',
-        imageUri: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=1280&h=720&q=80',
-        categoryId: MainCategory.IMITATION,
-        subCategoryName: 'Earrings & Jhumkas',
-        optionLetter: 'A',
-        quantity: 36
-      }
-    ],
-    totalItemsCount: 36,
-    createdAt: Date.now() - 1000 * 60 * 10
-  },
-  {
-    id: 'ord-202',
-    orderNumber: 'ORD-5502',
-    customerCode: 'CUST-RIYAZ-1',
-    shopName: 'BHAVANI NOVELTY',
-    cityName: 'RAJPARDl',
-    mobileNumber: '9824055667',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '16-09-2026',
-    notes: 'RAJPARDl... BHAVANI NOVELTY',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [
-      {
-        photoId: 'p-er-102',
-        photoCode: 'ER-102',
-        imageUri: 'https://images.unsplash.com/photo-1598560917505-59a3ad559071?auto=format&fit=crop&w=1280&h=720&q=80',
-        categoryId: MainCategory.IMITATION,
-        subCategoryName: 'Earrings & Jhumkas',
-        optionLetter: 'B',
-        quantity: 24
-      }
-    ],
-    totalItemsCount: 24,
-    createdAt: Date.now() - 1000 * 60 * 25
-  },
-  {
-    id: 'ord-203',
-    orderNumber: 'ORD-5503',
-    customerCode: 'CUST-RIYAZ-2',
-    shopName: 'BHAVANI NOVELTY',
-    cityName: 'RAJPARDl',
-    mobileNumber: '9824055667',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '16-09-2026',
-    notes: 'RAJPARDl... BHAVANI NOVELTY',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [
-      {
-        photoId: 'p-bg-201',
-        photoCode: 'BG-201',
-        imageUri: 'https://images.unsplash.com/photo-1611591475806-03f13f1737be?auto=format&fit=crop&w=1280&h=720&q=80',
-        categoryId: MainCategory.IMITATION,
-        subCategoryName: 'Bangles & Kadas',
-        optionLetter: 'A',
-        quantity: 48
-      }
-    ],
-    totalItemsCount: 48,
-    createdAt: Date.now() - 1000 * 60 * 40
-  },
-  {
-    id: 'ord-204',
-    orderNumber: 'ORD-5504',
-    customerCode: 'CUST-RIYAZ-3',
-    shopName: 'BHAVANI NOVELTY',
-    cityName: 'RAJPARDl',
-    mobileNumber: '9824055667',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '16-09-2026',
-    notes: 'RAJPARDl... BHAVANI NOVELTY',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'NOT_APPLICABLE',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 24,
-    createdAt: Date.now() - 1000 * 60 * 55
-  },
-  {
-    id: 'ord-205',
-    orderNumber: 'ORD-5505',
-    customerCode: 'CUST-ZARIF-1',
-    shopName: 'NAYRAH PHOTO ITEMS',
-    cityName: 'DWARKA',
-    mobileNumber: '9909012345',
-    source: 'SALESMAN',
-    salesmanName: 'ZARIF',
-    dateFormatted: '16-09-2026',
-    notes: 'DWARKA NAYRAH PHOTO ITEMS ...',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 60,
-    createdAt: Date.now() - 1000 * 60 * 70
-  },
-  {
-    id: 'ord-206',
-    orderNumber: 'ORD-5506',
-    customerCode: 'CUST-ZARIF-2',
-    shopName: 'NAYRAH PHOTO ITEMS',
-    cityName: 'DWARKA',
-    mobileNumber: '9909012345',
-    source: 'SALESMAN',
-    salesmanName: 'ZARIF',
-    dateFormatted: '16-09-2026',
-    notes: 'DWARKA NAYRAH PHOTO ITEMS ...',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 36,
-    createdAt: Date.now() - 1000 * 60 * 85
-  },
-  {
-    id: 'ord-207',
-    orderNumber: 'ORD-5507',
-    customerCode: 'CUST-ZARIF-3',
-    shopName: 'NAYRAH PHOTO ITEMS',
-    cityName: 'DWARKA',
-    mobileNumber: '9909012345',
-    source: 'SALESMAN',
-    salesmanName: 'ZARIF',
-    dateFormatted: '16-09-2026',
-    notes: 'DWARKA NAYRAH PHOTO ITEMS ...',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 48,
-    createdAt: Date.now() - 1000 * 60 * 100
-  },
-  {
-    id: 'ord-208',
-    orderNumber: 'ORD-5508',
-    customerCode: 'CUST-RIYAZ-4',
-    shopName: 'NANDINI BEAUTY',
-    cityName: 'BUARUCH',
-    mobileNumber: '9723044556',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '16-09-2026',
-    notes: 'BUARUCH.. NANDINI BEAUTY',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 72,
-    createdAt: Date.now() - 1000 * 60 * 115
-  },
-  {
-    id: 'ord-209',
-    orderNumber: 'ORD-5509',
-    customerCode: 'CUST-RIYAZ-5',
-    shopName: 'NANDINI BEAUTY',
-    cityName: 'BUARUCH',
-    mobileNumber: '9723044556',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '16-09-2026',
-    notes: 'BUARUCH.. NANDINI BEAUTY',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 48,
-    createdAt: Date.now() - 1000 * 60 * 130
-  },
-  {
-    id: 'ord-210',
-    orderNumber: 'ORD-5510',
-    customerCode: 'CUST-RIYAZ-6',
-    shopName: 'NANDINI BEAUTY',
-    cityName: 'BUARUCH',
-    mobileNumber: '9723044556',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '16-09-2026',
-    notes: 'BUARUCH.. NANDINI BEAUTY',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 36,
-    createdAt: Date.now() - 1000 * 60 * 145
-  },
-  // Customer mobile orders:
-  {
-    id: 'ord-211',
-    orderNumber: 'ORD-5511',
-    customerCode: 'CUST-VIVAH',
-    shopName: 'Vivah Novelty',
-    cityName: 'Upleta',
-    mobileNumber: '9825599887',
-    source: 'CUSTOMER',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'PENDING',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 96,
-    createdAt: Date.now() - 1000 * 60 * 60 * 24
-  },
-  {
-    id: 'ord-212',
-    orderNumber: 'ORD-5512',
-    customerCode: 'CUST-RUPKALA',
-    shopName: 'RUPKALA NOVELTY',
-    cityName: 'PORBANDAR',
-    mobileNumber: '9979011223',
-    source: 'CUSTOMER',
-    dateFormatted: '15-09-2026',
-    notes: 'nail and lipstick ma box nakhjo',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 144,
-    createdAt: Date.now() - 1000 * 60 * 60 * 26
-  },
-  {
-    id: 'ord-213',
-    orderNumber: 'ORD-5513',
-    customerCode: 'CUST-RUPKALA-2',
-    shopName: 'RUPKALA NOVELTY',
-    cityName: 'PORBANDAR',
-    mobileNumber: '9979011223',
-    source: 'CUSTOMER',
-    dateFormatted: '15-09-2026',
-    notes: '.B.B nail 4/7/18/26/39/48/67/70/ h...',
-    imitationStatus: 'PENDING',
-    cosmeticsStatus: 'PENDING',
-    hairStatus: 'NOT_APPLICABLE',
-    overallStatus: 'PENDING',
-    items: [],
-    totalItemsCount: 72,
-    createdAt: Date.now() - 1000 * 60 * 60 * 28
-  },
-  {
-    id: 'ord-214',
-    orderNumber: 'ORD-5514',
-    customerCode: 'CUST-RIYAZ-7',
-    shopName: 'RIYAZ DIRECT',
-    cityName: 'Surat',
-    mobileNumber: '9824055667',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'DONE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 60,
-    createdAt: Date.now() - 1000 * 60 * 60 * 30
-  },
-  {
-    id: 'ord-215',
-    orderNumber: 'ORD-5515',
-    customerCode: 'CUST-RIYAZ-8',
-    shopName: 'RIYAZ DIRECT',
-    cityName: 'Surat',
-    mobileNumber: '9824055667',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'DONE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 48,
-    createdAt: Date.now() - 1000 * 60 * 60 * 32
-  },
-  {
-    id: 'ord-216',
-    orderNumber: 'ORD-5516',
-    customerCode: 'CUST-RIYAZ-9',
-    shopName: 'RIYAZ DIRECT',
-    cityName: 'Surat',
-    mobileNumber: '9824055667',
-    source: 'SALESMAN',
-    salesmanName: 'RIYAZ',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'DONE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 84,
-    createdAt: Date.now() - 1000 * 60 * 60 * 34
-  },
-  {
-    id: 'ord-217',
-    orderNumber: 'ORD-5517',
-    customerCode: 'CUST-AMBIKA-1',
-    shopName: 'Ambika Novelty',
-    cityName: 'Rajpipla',
-    mobileNumber: '9426011223',
-    source: 'CUSTOMER',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'DONE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 120,
-    createdAt: Date.now() - 1000 * 60 * 60 * 36
-  },
-  {
-    id: 'ord-218',
-    orderNumber: 'ORD-5518',
-    customerCode: 'CUST-AMBIKA-2',
-    shopName: 'Ambika Novelty',
-    cityName: 'Rajpipla',
-    mobileNumber: '9426011223',
-    source: 'CUSTOMER',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'DONE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 96,
-    createdAt: Date.now() - 1000 * 60 * 60 * 38
-  },
-  {
-    id: 'ord-219',
-    orderNumber: 'ORD-5519',
-    customerCode: 'CUST-AMBIKA-3',
-    shopName: 'Ambika Novelty',
-    cityName: 'Rajpipla',
-    mobileNumber: '9426011223',
-    source: 'CUSTOMER',
-    dateFormatted: '15-09-2026',
-    notes: 'No Note',
-    imitationStatus: 'DONE',
-    cosmeticsStatus: 'DONE',
-    hairStatus: 'DONE',
-    overallStatus: 'DONE',
-    items: [],
-    totalItemsCount: 72,
-    createdAt: Date.now() - 1000 * 60 * 60 * 40
-  }
-];
+
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -785,7 +437,31 @@ export const useAppStore = create<AppState>()(
         { customerCode: 'CUST-102', shopName: 'Shrinath Cosmetics', cityName: 'Ahmedabad', mobileNumber: '9825012345', contactPerson: 'Ketan Patel', address: 'Ratanpole Wholesale Market' },
         { customerCode: 'CUST-103', shopName: 'Radhe Fashion Jewelry', cityName: 'Surat', mobileNumber: '9712345678', contactPerson: 'Amit Shah', address: 'Bhagal Main Road' }
       ],
-      orders: defaultOrders,
+      orders: [],
+      communityPosts: [
+        {
+          id: 'post-1',
+          customerCode: 'CUST-101',
+          shopName: 'Pooja Novelty Store',
+          authorName: 'Rajesh Bhai',
+          cityName: 'Mumbai',
+          text: 'New festive collection requirement - need 50 dozen bangles and choker sets immediately.',
+          imageUrl: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=1280&h=720&q=80',
+          timestamp: Date.now() - 1000 * 60 * 60 * 2,
+          type: 'PHOTO'
+        },
+        {
+          id: 'post-2',
+          customerCode: 'ADMIN',
+          shopName: 'SHIVAM WHOLESALE (ADMIN)',
+          authorName: 'Admin Desk',
+          text: '📢 Diwali special imitation jhumkas & new Korean claw clips arrived in showroom! Check catalog for fresh designs.',
+          imageUrl: 'https://images.unsplash.com/photo-1599643478514-4a410f0a82ef?auto=format&fit=crop&w=1280&h=720&q=80',
+          timestamp: Date.now() - 1000 * 60 * 60 * 6,
+          type: 'ADMIN_ANNOUNCEMENT',
+          isAnnouncement: true
+        }
+      ],
       
       activeCategoryId: MainCategory.IMITATION,
       activeSubCategoryId: 'sub-earrings',
@@ -809,15 +485,50 @@ export const useAppStore = create<AppState>()(
         }
       ],
 
-      sendMessage: (msg) => set((state) => ({
-        chatMessages: [...state.chatMessages, msg]
-      })),
+      sendMessage: (msg) => {
+        syncChatMessageToFirebase(msg);
+        set((state) => ({
+          chatMessages: [...state.chatMessages, msg]
+        }));
+      },
 
-      markMessagesAsRead: (customerCode) => set((state) => ({
-        chatMessages: state.chatMessages.map(m => 
-          m.customerCode === customerCode && m.sender === 'CUSTOMER' ? { ...m, isRead: true } : m
-        )
-      })),
+      markMessagesAsRead: (customerCode) => {
+        markMessagesAsReadInFirebase(customerCode);
+        set((state) => ({
+          chatMessages: state.chatMessages.map(m => 
+            m.customerCode === customerCode && m.sender === 'CUSTOMER' ? { ...m, isRead: true } : m
+          )
+        }));
+      },
+
+      setChatMessages: (messages) => set({ chatMessages: messages }),
+
+      // Community Posts Actions
+      setCommunityPosts: (posts) => set({ communityPosts: posts }),
+      addCommunityPost: (post) => {
+        syncCommunityPostToFirebase(post);
+        set((state) => ({
+          communityPosts: [post, ...state.communityPosts]
+        }));
+      },
+      deleteCommunityPost: (postId) => {
+        deleteCommunityPostFromFirebase(postId);
+        set((state) => ({
+          communityPosts: state.communityPosts.filter(p => p.id !== postId)
+        }));
+      },
+
+      // Firebase state & setters
+      firebaseConnected: false,
+      firebaseSyncing: false,
+      setFirebaseConnected: (status) => set({ firebaseConnected: status }),
+      setFirebaseSyncing: (syncing) => set({ firebaseSyncing: syncing }),
+      setOrders: (newOrders) => set({ orders: newOrders }),
+      setCategories: (newCategories) => set({ categories: newCategories }),
+      setSubCategories: (newSubCategories) => set({ subCategories: newSubCategories }),
+      setPhotos: (newPhotos) => set({ photos: newPhotos }),
+      setShowroomVideos: (newVideos) => set({ showroomVideos: newVideos }),
+      setCustomers: (newCustomers) => set({ customers: newCustomers }),
 
       setShowroomScreenMode: (mode) => set({ showroomScreenMode: mode }),
 
@@ -897,7 +608,7 @@ export const useAppStore = create<AppState>()(
       clearCart: () => set({ cart: [] }),
       setCurrentCustomer: (customer) => set({ currentCustomer: customer }),
 
-      placeOrder: () => set((state) => {
+      placeOrder: (options) => set((state) => {
         if (!state.currentCustomer || state.cart.length === 0) return state;
         
         const hasImitation = state.cart.some(item => item.categoryId === MainCategory.IMITATION);
@@ -923,11 +634,14 @@ export const useAppStore = create<AppState>()(
           cosmeticsStatus: hasCosmetics ? 'PENDING' : 'NOT_APPLICABLE',
           hairStatus: hasHair ? 'PENDING' : 'NOT_APPLICABLE',
           overallStatus: 'PENDING',
-          notes: 'No Note',
+          notes: options?.notes ? options.notes.trim() : 'No Note',
+          voiceNoteUrl: options?.voiceNoteUrl,
           createdAt: Date.now(),
           source: 'CUSTOMER',
           dateFormatted
         };
+
+        syncOrderToFirebase(newOrder);
 
         return {
           orders: [newOrder, ...state.orders],
@@ -936,37 +650,66 @@ export const useAppStore = create<AppState>()(
         };
       }),
 
-      addOrder: (newOrder) => set((state) => ({
-        orders: [newOrder, ...state.orders]
-      })),
+      addOrder: (newOrder) => {
+        syncOrderToFirebase(newOrder);
+        set((state) => ({
+          orders: [newOrder, ...state.orders]
+        }));
+      },
 
-      toggleOrderStatus: (orderId) => set((state) => ({
-        orders: state.orders.map(o => {
+      toggleOrderStatus: (orderId) => set((state) => {
+        const updatedOrders = state.orders.map(o => {
           if (o.id !== orderId) return o;
           const nextStatus = (o.overallStatus === 'DONE' || o.overallStatus === 'READY_TO_SHIP') ? 'PENDING' : 'DONE';
-          return {
+          const updated = {
             ...o,
             overallStatus: nextStatus,
             imitationStatus: o.imitationStatus !== 'NOT_APPLICABLE' ? nextStatus : 'NOT_APPLICABLE',
             cosmeticsStatus: o.cosmeticsStatus !== 'NOT_APPLICABLE' ? nextStatus : 'NOT_APPLICABLE',
             hairStatus: o.hairStatus !== 'NOT_APPLICABLE' ? nextStatus : 'NOT_APPLICABLE'
           };
-        })
-      })),
+          syncOrderToFirebase(updated);
+          return updated;
+        });
+        return { orders: updatedOrders };
+      }),
 
-      updateOrderNotes: (orderId, notes) => set((state) => ({
-        orders: state.orders.map(o => o.id === orderId ? { ...o, notes } : o)
-      })),
+      updateOrderNotes: (orderId, notes) => set((state) => {
+        const updatedOrders = state.orders.map(o => {
+          if (o.id === orderId) {
+            const updated = { ...o, notes };
+            syncOrderToFirebase(updated);
+            return updated;
+          }
+          return o;
+        });
+        return { orders: updatedOrders };
+      }),
 
-      addCustomer: (customer) => set((state) => ({ customers: [...state.customers, customer] })),
+      addCustomer: (customer) => {
+        syncCustomerToFirebase(customer);
+        set((state) => ({ customers: [...state.customers, customer] }));
+      },
 
-      updateCustomer: (customerCode, data) => set((state) => ({
-        customers: state.customers.map(c => c.customerCode === customerCode ? { ...c, ...data } : c)
-      })),
+      updateCustomer: (customerCode, data) => set((state) => {
+        const updatedCustomers = state.customers.map(c => {
+          if (c.customerCode === customerCode) {
+            const updated = { ...c, ...data };
+            syncCustomerToFirebase(updated);
+            return updated;
+          }
+          return c;
+        });
+        return { customers: updatedCustomers };
+      }),
 
-      deleteCustomer: (customerCode) => set((state) => ({
-        customers: state.customers.filter(c => c.customerCode !== customerCode)
-      })),
+      deleteCustomer: (customerCode) => {
+        deleteCustomerFromFirebase(customerCode);
+        set((state) => ({
+          customers: state.customers.filter(c => c.customerCode !== customerCode),
+          orders: state.orders.filter(o => o.customerCode !== customerCode)
+        }));
+      },
       
       updateOrderStatus: (orderId, department, status) => set((state) => {
         const newOrders = state.orders.map(order => {
@@ -984,111 +727,207 @@ export const useAppStore = create<AppState>()(
           } else {
             updated.overallStatus = 'PENDING';
           }
+          syncOrderToFirebase(updated);
           return updated;
         });
         return { orders: newOrders };
       }),
 
-      updateOverallOrderStatus: (orderId, status) => set((state) => ({
-        orders: state.orders.map(o => o.id === orderId ? { ...o, overallStatus: status } : o)
-      })),
+      updateOverallOrderStatus: (orderId, status) => set((state) => {
+        const updatedOrders = state.orders.map(o => {
+          if (o.id === orderId) {
+            const updated = { ...o, overallStatus: status };
+            syncOrderToFirebase(updated);
+            return updated;
+          }
+          return o;
+        });
+        return { orders: updatedOrders };
+      }),
 
-      packAllDepartments: (orderId) => set((state) => ({
-        orders: state.orders.map(order => {
+      packAllDepartments: (orderId) => set((state) => {
+        const updatedOrders = state.orders.map(order => {
           if (order.id !== orderId) return order;
-          return {
+          const updated = {
             ...order,
             imitationStatus: order.imitationStatus !== 'NOT_APPLICABLE' ? 'DONE' : 'NOT_APPLICABLE',
             cosmeticsStatus: order.cosmeticsStatus !== 'NOT_APPLICABLE' ? 'DONE' : 'NOT_APPLICABLE',
             hairStatus: order.hairStatus !== 'NOT_APPLICABLE' ? 'DONE' : 'NOT_APPLICABLE',
             overallStatus: 'DONE'
           };
-        })
-      })),
-
-      deleteOrder: (orderId) => set((state) => ({
-        orders: state.orders.filter(o => o.id !== orderId)
-      })),
-
-      addPhoto: (photo) => set((state) => ({ photos: [...state.photos, photo] })),
-
-      addMultiplePhotos: (newPhotos) => set((state) => ({
-        photos: [...state.photos, ...newPhotos]
-      })),
-
-      reorderPhotos: (orderedPhotos) => set({ photos: orderedPhotos }),
-
-      addSubCategory: (subCat) => set((state) => {
-        if (state.subCategories.some(s => s.id === subCat.id)) return state;
-        return { subCategories: [...state.subCategories, subCat] };
+          syncOrderToFirebase(updated);
+          return updated;
+        });
+        return { orders: updatedOrders };
       }),
-      addCategory: (category) => set((state) => ({
-        categories: [...state.categories, category]
-      })),
-      updateCategory: (categoryId, data) => set((state) => ({
-        categories: state.categories.map(c => c.id === categoryId ? { ...c, ...data } : c)
-      })),
-      deleteCategory: (categoryId) => set((state) => ({
-        categories: state.categories.filter(c => c.id !== categoryId)
-      })),
-      updateSubCategory: (subCategoryId, data) => set((state) => ({
-        subCategories: state.subCategories.map(s => s.id === subCategoryId ? { ...s, ...data } : s)
-      })),
-      deleteSubCategory: (subCategoryId) => set((state) => ({
-        subCategories: state.subCategories.filter(s => s.id !== subCategoryId)
-      })),
 
-      updatePhoto: (photoId, data) => set((state) => ({
-        photos: state.photos.map(p => p.id === photoId ? { ...p, ...data } : p)
-      })),
+      deleteOrder: (orderId) => {
+        deleteOrderFromFirebase(orderId);
+        set((state) => ({
+          orders: state.orders.filter(o => o.id !== orderId)
+        }));
+      },
 
-      deletePhoto: (photoId) => set((state) => ({
-        photos: state.photos.filter(p => p.id !== photoId)
-      })),
+      addPhoto: (photo) => {
+        syncPhotoToFirebase(photo);
+        set((state) => ({ photos: [...state.photos, photo] }));
+      },
 
-      batchSetStock: (photoId, available) => set((state) => ({
-        photos: state.photos.map(p => {
+      addMultiplePhotos: (newPhotos) => {
+        newPhotos.forEach(p => syncPhotoToFirebase(p));
+        set((state) => ({
+          photos: [...state.photos, ...newPhotos]
+        }));
+      },
+
+      reorderPhotos: (orderedPhotos) => {
+        orderedPhotos.forEach(p => syncPhotoToFirebase(p));
+        set({ photos: orderedPhotos });
+      },
+
+      addSubCategory: (subCat) => {
+        syncSubCategoryToFirebase(subCat);
+        set((state) => {
+          if (state.subCategories.some(s => s.id === subCat.id)) return state;
+          return { subCategories: [...state.subCategories, subCat] };
+        });
+      },
+      addCategory: (category) => {
+        syncCategoryToFirebase(category);
+        set((state) => ({
+          categories: [...state.categories, category]
+        }));
+      },
+      updateCategory: (categoryId, data) => set((state) => {
+        const updatedCategories = state.categories.map(c => {
+          if (c.id === categoryId) {
+            const updated = { ...c, ...data };
+            syncCategoryToFirebase(updated);
+            return updated;
+          }
+          return c;
+        });
+        return { categories: updatedCategories };
+      }),
+      deleteCategory: (categoryId) => {
+        deleteCategoryFromFirebase(categoryId);
+        set((state) => ({
+          categories: state.categories.filter(c => c.id !== categoryId)
+        }));
+      },
+      updateSubCategory: (subCategoryId, data) => set((state) => {
+        const updatedSubCats = state.subCategories.map(s => {
+          if (s.id === subCategoryId) {
+            const updated = { ...s, ...data };
+            syncSubCategoryToFirebase(updated);
+            return updated;
+          }
+          return s;
+        });
+        return { subCategories: updatedSubCats };
+      }),
+      deleteSubCategory: (subCategoryId) => {
+        deleteSubCategoryFromFirebase(subCategoryId);
+        set((state) => ({
+          subCategories: state.subCategories.filter(s => s.id !== subCategoryId)
+        }));
+      },
+
+      updatePhoto: (photoId, data) => set((state) => {
+        const updatedPhotos = state.photos.map(p => {
+          if (p.id === photoId) {
+            const updated = { ...p, ...data };
+            if (data.isHidden !== undefined) {
+              toggleProductHideInFirebase(photoId, data.isHidden);
+            }
+            syncPhotoToFirebase(updated);
+            return updated;
+          }
+          return p;
+        });
+        return { photos: updatedPhotos };
+      }),
+
+      deletePhoto: (photoId) => {
+        deletePhotoFromFirebase(photoId);
+        set((state) => ({
+          photos: state.photos.filter(p => p.id !== photoId)
+        }));
+      },
+
+      batchSetStock: (photoId, available) => set((state) => {
+        const updatedPhotos = state.photos.map(p => {
           if (p.id !== photoId) return p;
-          return {
+          const updated = {
             ...p,
             aAvailable: available,
             bAvailable: available,
             cAvailable: available,
             dAvailable: available
           };
-        })
-      })),
-
-      addShowroomVideo: (video) => set((state) => ({
-        showroomVideos: [...(state.showroomVideos || []), video]
-      })),
-
-      addMultipleShowroomVideos: (newVideos) => set((state) => ({
-        showroomVideos: [...(state.showroomVideos || []), ...newVideos]
-      })),
-
-      deleteShowroomVideo: (videoId) => set((state) => ({
-        showroomVideos: (state.showroomVideos || []).filter(v => v.id !== videoId)
-      })),
-
-      reorderShowroomVideos: (reordered) => set({
-        showroomVideos: reordered
+          syncPhotoToFirebase(updated);
+          return updated;
+        });
+        return { photos: updatedPhotos };
       }),
+
+      addShowroomVideo: (video) => {
+        syncShowroomVideoToFirebase(video);
+        set((state) => ({
+          showroomVideos: [...(state.showroomVideos || []), video]
+        }));
+      },
+
+      addMultipleShowroomVideos: (newVideos) => {
+        newVideos.forEach(v => syncShowroomVideoToFirebase(v));
+        set((state) => ({
+          showroomVideos: [...(state.showroomVideos || []), ...newVideos]
+        }));
+      },
+
+      deleteShowroomVideo: (videoId) => {
+        deleteShowroomVideoFromFirebase(videoId);
+        set((state) => ({
+          showroomVideos: (state.showroomVideos || []).filter(v => v.id !== videoId)
+        }));
+      },
+      updateShowroomVideo: (videoId, updates) => {
+        set((state) => {
+          const updatedVideos = (state.showroomVideos || []).map(v => 
+            v.id === videoId ? { ...v, ...updates } : v
+          );
+          const videoToUpdate = updatedVideos.find(v => v.id === videoId);
+          if (videoToUpdate) {
+            syncShowroomVideoToFirebase(videoToUpdate);
+          }
+          return { showroomVideos: updatedVideos };
+        });
+      },
+
+      reorderShowroomVideos: (reordered) => {
+        reordered.forEach(v => syncShowroomVideoToFirebase(v));
+        set({
+          showroomVideos: reordered
+        });
+      },
 
       resetToDefaults: () => set({
         categories: defaultCategories,
         subCategories: defaultSubCategories,
         photos: defaultPhotos,
         showroomVideos: defaultShowroomVideos,
-        orders: defaultOrders,
+        orders: [],
         activeCategoryId: MainCategory.IMITATION,
         activeSubCategoryId: 'sub-earrings',
         activePhotoId: 'p-er-101'
       })
     }),
     {
-      name: 'shivam-wholesale-pc-v7',
-      version: 7,
+      name: 'shivam-wholesale-pc-v9',
+      version: 9,
+      partialize: (state) => Object.fromEntries(
+        Object.entries(state).filter(([key]) => !['photos', 'showroomVideos', 'orders', 'chatMessages'].includes(key))
+      ),
     }
   )
 );

@@ -1,7 +1,7 @@
-import { ThumbnailCropModal } from './ThumbnailCropModal';
-import React, { useState, useRef, useEffect } from 'react';
+const fs = require('fs');
+const cleanCode = `import React, { useState, useRef } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Edit2, Trash2, ArrowLeft, ChevronDown, Check, Lock, ShieldCheck, X, CheckCircle2, Loader2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, ArrowLeft, ChevronDown, Check, Lock, ShieldCheck } from 'lucide-react';
 import { getTextColorForBackground } from '../utils';
 
 interface CategoryManagerProps {
@@ -9,19 +9,6 @@ interface CategoryManagerProps {
 }
 
 export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => {
-  // Pending thumbnail preview state before explicit Save
-  const [pendingCatThumbnail, setPendingCatThumbnail] = useState<string | null>(null);
-  const [pendingSubThumbnail, setPendingSubThumbnail] = useState<string | null>(null);
-  const [isSavingCat, setIsSavingCat] = useState(false);
-  const [isSavingSub, setIsSavingSub] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const [cropTarget, setCropTarget] = useState<{
-    file: File;
-    type: "CATEGORY" | "SUBCATEGORY";
-    targetId: string;
-    title: string;
-  } | null>(null);
   const { categories, subCategories, addCategory, updateCategory, deleteCategory, addSubCategory, updateSubCategory, deleteSubCategory } = useAppStore();
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(categories[0]?.id || null);
   const selectedCategory = categories.find(c => c.id === selectedCategoryId);
@@ -43,15 +30,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
   const catImageRef = useRef<HTMLInputElement>(null);
   const subImageRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setPendingCatThumbnail(null);
-  }, [selectedCategoryId]);
-
-  useEffect(() => {
-    setPendingSubThumbnail(null);
-  }, [selectedSubcategoryId]);
-
-  useEffect(() => {
+  React.useEffect(() => {
     if (selectedCategoryId) {
       const subs = subCategories.filter(s => s.categoryId === selectedCategoryId);
       if (!subs.some(s => s.id === selectedSubcategoryId)) {
@@ -61,7 +40,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
   }, [selectedCategoryId, subCategories]);
 
   const handleCreateCategory = () => {
-    const id = `cat-${Date.now()}`;
+    const id = \`cat-\${Date.now()}\`;
     addCategory({
       id,
       displayName: 'New Category',
@@ -74,7 +53,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
 
   const handleCreateSubcategory = () => {
     if (!selectedCategoryId) return;
-    const id = `sub-${Date.now()}`;
+    const id = \`sub-\${Date.now()}\`;
     addSubCategory({
       id,
       categoryId: selectedCategoryId,
@@ -89,70 +68,18 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
 
   const handleCatImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && selectedCategoryId && selectedCategory) {
-      setCropTarget({
-        file,
-        type: "CATEGORY",
-        targetId: selectedCategoryId,
-        title: `Category: ${selectedCategory.displayName.toUpperCase()}`
-      });
+    if (file && selectedCategoryId) {
+      updateCategory(selectedCategoryId, { thumbnailUrl: URL.createObjectURL(file) });
     }
     e.target.value = '';
   };
 
   const handleSubImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && selectedSubcategoryId && selectedSubcategory) {
-      setCropTarget({
-        file,
-        type: "SUBCATEGORY",
-        targetId: selectedSubcategoryId,
-        title: `Subcategory: ${selectedSubcategory.name.toUpperCase()}`
-      });
+    if (file && selectedSubcategoryId) {
+      updateSubCategory(selectedSubcategoryId, { thumbnailUrl: URL.createObjectURL(file) });
     }
     e.target.value = '';
-  };
-
-  const handleSaveCroppedThumbnail = (croppedDataUrl: string) => {
-    if (!cropTarget) return;
-    if (cropTarget.type === "CATEGORY") {
-      setPendingCatThumbnail(croppedDataUrl);
-    } else {
-      setPendingSubThumbnail(croppedDataUrl);
-    }
-    setCropTarget(null);
-  };
-
-  const handleSaveCategoryThumbnail = async () => {
-    if (!selectedCategoryId || !pendingCatThumbnail) return;
-    setIsSavingCat(true);
-    try {
-      updateCategory(selectedCategoryId, { thumbnailUrl: pendingCatThumbnail });
-      setPendingCatThumbnail(null);
-      setToastMessage(`Category "${selectedCategory?.displayName}" thumbnail saved successfully!`);
-      setTimeout(() => setToastMessage(null), 3500);
-    } catch (err) {
-      console.error('Failed to save category thumbnail:', err);
-      alert('Failed to save category thumbnail to Firebase.');
-    } finally {
-      setIsSavingCat(false);
-    }
-  };
-
-  const handleSaveSubCategoryThumbnail = async () => {
-    if (!selectedSubcategoryId || !pendingSubThumbnail) return;
-    setIsSavingSub(true);
-    try {
-      updateSubCategory(selectedSubcategoryId, { thumbnailUrl: pendingSubThumbnail });
-      setPendingSubThumbnail(null);
-      setToastMessage(`Subcategory "${selectedSubcategory?.name}" thumbnail saved successfully!`);
-      setTimeout(() => setToastMessage(null), 3500);
-    } catch (err) {
-      console.error('Failed to save subcategory thumbnail:', err);
-      alert('Failed to save subcategory thumbnail to Firebase.');
-    } finally {
-      setIsSavingSub(false);
-    }
   };
 
   const startEditCategory = () => {
@@ -181,24 +108,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
   };
 
   return (
-    <>
-      {cropTarget && (
-        <ThumbnailCropModal
-          imageFile={cropTarget.file}
-          targetTitle={cropTarget.title}
-          onClose={() => setCropTarget(null)}
-          onSave={handleSaveCroppedThumbnail}
-        />
-      )}
-      <div className="fixed inset-0 z-50 bg-[#02050f] flex flex-col select-none">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-black px-5 py-2.5 rounded-xl font-black text-xs sm:text-sm shadow-[0_4px_20px_rgba(16,185,129,0.5)] flex items-center gap-2.5 border border-emerald-400">
-          <CheckCircle2 size={18} strokeWidth={2.5} />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
+    <div className="fixed inset-0 z-50 bg-[#02050f] flex flex-col select-none">
       {/* Hidden inputs */}
       <input type="file" ref={catImageRef} onChange={handleCatImageUpload} accept="image/*" className="hidden" />
       <input type="file" ref={subImageRef} onChange={handleSubImageUpload} accept="image/*" className="hidden" />
@@ -235,7 +145,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
               <select 
                 className="w-full appearance-none font-bold p-4 rounded-lg focus:outline-none cursor-pointer transition-colors shadow-lg"
                 style={{ 
-                  backgroundColor: selectedCategory?.accentColorHex ? `${selectedCategory.accentColorHex}dd` : '#7c5cdb',
+                  backgroundColor: selectedCategory?.accentColorHex ? \`\${selectedCategory.accentColorHex}dd\` : '#7c5cdb',
                   color: selectedCategory?.accentColorHex ? getTextColorForBackground(selectedCategory.accentColorHex) : '#ffffff'
                 }}
                 value={selectedCategoryId || ''}
@@ -295,58 +205,19 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
                   </span>
                 </div>
                 <div className="bg-[#141b2d] p-3 rounded-2xl w-full aspect-video flex items-center justify-center relative group overflow-hidden border border-slate-700 shadow-xl">
-                  <img src={pendingCatThumbnail || selectedCategory.thumbnailUrl} alt={selectedCategory.displayName} className="w-full h-full object-cover rounded-xl" />
-                  {pendingCatThumbnail && (
-                    <div className="absolute top-3 left-3 bg-amber-500 text-black text-[10px] font-black px-2 py-0.5 rounded shadow-lg flex items-center gap-1 uppercase tracking-wider">
-                      <span>Unsaved Preview</span>
-                    </div>
-                  )}
+                  <img src={selectedCategory.thumbnailUrl} alt={selectedCategory.displayName} className="w-full h-full object-cover rounded-xl" />
                 </div>
-
-                {pendingCatThumbnail ? (
-                  <div className="w-full mt-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-xl">
-                    <span className="text-xs text-amber-300 font-medium">Commit this new thumbnail?</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setPendingCatThumbnail(null)}
-                        disabled={isSavingCat}
-                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold rounded-lg text-xs transition flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
-                      >
-                        <X size={14} />
-                        <span>Cancel</span>
-                      </button>
-                      <button
-                        onClick={handleSaveCategoryThumbnail}
-                        disabled={isSavingCat}
-                        className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded-lg text-xs transition shadow flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
-                      >
-                        {isSavingCat ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" />
-                            <span>Saving...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Check size={14} strokeWidth={3} />
-                            <span>Save</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="w-full mt-3 flex items-center justify-between text-[11px] text-slate-400">
-                    <span className="flex items-center gap-1 text-slate-400">
-                      <ShieldCheck size={13} className="text-emerald-400" /> Max file size: 5 MB
-                    </span>
-                    <button 
-                      onClick={() => catImageRef.current?.click()}
-                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-lg text-xs transition shadow"
-                    >
-                      Change Thumbnail
-                    </button>
-                  </div>
-                )}
+                <div className="w-full mt-3 flex items-center justify-between text-[11px] text-slate-400">
+                  <span className="flex items-center gap-1 text-slate-400">
+                    <ShieldCheck size={13} className="text-emerald-400" /> Max file size: 5 MB
+                  </span>
+                  <button 
+                    onClick={() => catImageRef.current?.click()}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-lg text-xs transition shadow"
+                  >
+                    Change Thumbnail
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -355,8 +226,39 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
         {/* RIGHT COLUMN: Subcategories */}
         <div className="flex-1 p-8 flex flex-col items-center overflow-y-auto">
           <div className="w-full max-w-md space-y-4">
-            {/* Dropdown */}
             <div className="relative">
+              <select 
+                className="w-full appearance-none font-bold p-4 rounded-lg focus:outline-none cursor-pointer transition-colors shadow-lg"
+                style={{ 
+                  backgroundColor: selectedCategory?.accentColorHex ? \`\${selectedCategory.accentColorHex}dd\` : '#7c5cdb',
+                  color: selectedCategory?.accentColorHex ? getTextColorForBackground(selectedCategory.accentColorHex) : '#ffffff'
+                }}
+                value={selectedCategoryId || ''}
+                disabled={true}
+              >
+                {categories.map(c => (
+                  <option key={c.id} value={c.id} style={{ color: '#000' }}>{c.displayName.toUpperCase()}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: selectedCategory?.accentColorHex ? getTextColorForBackground(selectedCategory.accentColorHex) : '#ffffff' }} />
+            </div>
+
+            {selectedCategory && (
+              <div 
+                className="font-bold p-4 rounded-lg flex items-center justify-between transition-colors shadow-lg"
+                style={{ 
+                  backgroundColor: selectedCategory.accentColorHex || '#a69c73',
+                  color: getTextColorForBackground(selectedCategory.accentColorHex || '#a69c73')
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-4 h-4 rounded-full border border-black/30" style={{ backgroundColor: selectedCategory.accentColorHex }} />
+                  <span>{selectedCategory.displayName.toUpperCase()}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="relative mt-6">
               <select 
                 className="w-full appearance-none bg-[#7c5cdb] hover:bg-[#6b4ab5] text-white font-bold p-4 rounded-lg focus:outline-none cursor-pointer"
                 value={selectedSubcategoryId || ''}
@@ -413,58 +315,19 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
                   </span>
                 </div>
                 <div className="bg-[#141b2d] p-3 rounded-2xl w-full aspect-video flex items-center justify-center relative group overflow-hidden border border-slate-700 shadow-xl">
-                  <img src={pendingSubThumbnail || selectedSubcategory.thumbnailUrl} alt={selectedSubcategory.name} className="w-full h-full object-cover rounded-xl" />
-                  {pendingSubThumbnail && (
-                    <div className="absolute top-3 left-3 bg-amber-500 text-black text-[10px] font-black px-2 py-0.5 rounded shadow-lg flex items-center gap-1 uppercase tracking-wider">
-                      <span>Unsaved Preview</span>
-                    </div>
-                  )}
+                  <img src={selectedSubcategory.thumbnailUrl} alt={selectedSubcategory.name} className="w-full h-full object-cover rounded-xl" />
                 </div>
-
-                {pendingSubThumbnail ? (
-                  <div className="w-full mt-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-xl">
-                    <span className="text-xs text-amber-300 font-medium">Commit this new thumbnail?</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setPendingSubThumbnail(null)}
-                        disabled={isSavingSub}
-                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold rounded-lg text-xs transition flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
-                      >
-                        <X size={14} />
-                        <span>Cancel</span>
-                      </button>
-                      <button
-                        onClick={handleSaveSubCategoryThumbnail}
-                        disabled={isSavingSub}
-                        className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded-lg text-xs transition shadow flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
-                      >
-                        {isSavingSub ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" />
-                            <span>Saving...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Check size={14} strokeWidth={3} />
-                            <span>Save</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="w-full mt-3 flex items-center justify-between text-[11px] text-slate-400">
-                    <span className="flex items-center gap-1 text-slate-400">
-                      <ShieldCheck size={13} className="text-emerald-400" /> Max file size: 5 MB
-                    </span>
-                    <button 
-                      onClick={() => subImageRef.current?.click()}
-                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-lg text-xs transition shadow"
-                    >
-                      Change Thumbnail
-                    </button>
-                  </div>
-                )}
+                <div className="w-full mt-3 flex items-center justify-between text-[11px] text-slate-400">
+                  <span className="flex items-center gap-1 text-slate-400">
+                    <ShieldCheck size={13} className="text-emerald-400" /> Max file size: 5 MB
+                  </span>
+                  <button 
+                    onClick={() => subImageRef.current?.click()}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-lg text-xs transition shadow"
+                  >
+                    Change Thumbnail
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -514,6 +377,9 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onClose }) => 
         </div>
       )}
     </div>
-    </>
   );
 };
+`;
+
+fs.writeFileSync('src/components/CategoryManager.tsx', cleanCode);
+console.log("Restored cleanly without warnings!");
